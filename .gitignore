@@ -18,3 +18,7 @@ csrc/*.log
 
 build/
 dist/
+cmake-build-*/
+*.nsys-rep
+*.sqlite
+project/results/raw/
