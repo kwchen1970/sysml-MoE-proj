@@ -1,0 +1,2 @@
+tag,ngpu,nodes,util_sm_mean,util_sm_max,rank,dtype,S,H,I,E,k,latency_ms,error_pct,EC,gpu,sm_arch,topology,mlp,bM,bN0,bK0,bN1,bK1,threads,blocks_per_sm,sms,blocks,rtol,atol,graph_launches,warmup,runs,workspace_mib
+util,1,1,49.25,100.00,0,bf16,4096,2048,2048,32,2,1.968063,0.000000,256,NVIDIA A100-SXM4-40GB,sm_80,SingleNode,Gated,128,128,32,128,32,128,2,108,216,8.0e-02,8.0e-03,0,8,800,160.426151
