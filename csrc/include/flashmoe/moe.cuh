@@ -164,6 +164,7 @@ namespace flashmoe::moe
   >
   __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
+    FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
     extern __shared__ __align__(MAX_ALIGNMENT) cuda::std::byte flashWorkspace[];
     // unpack pointers
@@ -196,6 +197,7 @@ namespace flashmoe::moe
       os::start<topo, subscriberCount, threads, bM, Config::PSS::value, DataType>(flashWorkspace,
         kArgs.expertCounts, symHeap, ctx, kArgs.EC,kArgs.I / bN0, kArgs.H / bN1, dispatchBlocks,
         kArgs.E, kArgs.I, processors);
+      FLASHMOE_TRACE_FINISH();
       return;
     }
     const auto stateNumber = ctx.stateNumbers[blockIdx.x];
@@ -243,6 +245,7 @@ namespace flashmoe::moe
       // for the next epoch
       ctx.stateNumbers[blockIdx.x] = sbs::next(stateNumber);
     }
+    FLASHMOE_TRACE_FINISH();
   }
 
   template <

@@ -280,3 +280,9 @@ add_executable(testGatedGEMM
         tests/gatedGEMM.cu
 )
 flash_target_common(testGatedGEMM)
+
+# Team experiment: default builds compile out all device trace hooks.
+option(FLASHMOE_PROJECT_TRACE "Enable bounded project device recorder in testFlashMoE" OFF)
+if(FLASHMOE_PROJECT_TRACE)
+  target_compile_definitions(testFlashMoE PRIVATE FLASHMOE_PROJECT_TRACE=1)
+endif()

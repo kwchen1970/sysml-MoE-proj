@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "project/scripts/expert_granularity/run.py", line 104, in <module>
+    if __name__ == "__main__": main()
+  File "project/scripts/expert_granularity/run.py", line 43, in main
+    meta = dict(run_id=run_id, revision=git("rev-parse", "HEAD"), diff=git("diff", "--", "csrc", "flashmoe"),
+  File "project/scripts/expert_granularity/run.py", line 42, in git
+    def git(*args): return subprocess.check_output(["git", "--no-optional-locks", *args], text=True).strip()
+  File "/usr/lib64/python3.6/subprocess.py", line 356, in check_output
+    **kwargs).stdout
+  File "/usr/lib64/python3.6/subprocess.py", line 423, in run
+    with Popen(*popenargs, **kwargs) as process:
+TypeError: __init__() got an unexpected keyword argument 'text'

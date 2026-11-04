@@ -17,6 +17,7 @@
 #include "infra/task.cuh"
 #include "tile.cuh" // cublasdx and tileGEMM
 #include "infra/tq.cuh"
+#include "infra/project_trace.cuh"
 
 namespace flashmoe::processor
 {
@@ -263,6 +264,7 @@ namespace flashmoe::processor
     const size_t expertWeightSize = static_cast<size_t>(I) * H;
     static_assert(taskWidth > 0 && taskWidth < WARP_SIZE);
     while (!tqs.interrupt) {
+      FLASHMOE_TRACE_STATE(flashmoe::project_trace::wait);
       if (threadIdx.x / WARP_SIZE == 0) {
         if (threadIdx.x == 0) {
           cuda::atomic_ref<uint64_t, cuda::thread_scope_device> doorbell{*pA.pDB};
@@ -271,6 +273,7 @@ namespace flashmoe::processor
           while (payload.signal == tqs.signal && payload.interrupt == 0) {
             payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
           }
+          FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
           if (payload.interrupt) {
             // we need to clear out our mailbox to ensure it's ready for a subsequent epoch
             constexpr auto TQSZero = cuda::std::bit_cast<uint64_t>(TQSignal{0, 0});
@@ -298,6 +301,8 @@ namespace flashmoe::processor
       __syncthreads();
       tqs.interrupt = globalInterrupt;
       if (!tqs.interrupt) {
+        FLASHMOE_TRACE_STATE(flashmoe::project_trace::task,
+          static_cast<unsigned>(currentTask.getTaskType()), currentTask.tileIdx);
         // shared -> registers
         switch (const auto task = currentTask; task.getTaskType()) {
         case TaskType::GEMM0: {
@@ -419,8 +424,13 @@ namespace flashmoe::processor
         }
         break;
         }
+#if FLASHMOE_PROJECT_TRACE
+        __syncthreads(); // trace boundary includes completion by all task threads
+        FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
+#endif
       }
     }
+    FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
   }
 }
 #endif //FLASHMOE_COMPUTE_CUH

@@ -15,6 +15,7 @@
 #include "../include/flashmoe/flashmoe.cuh"
 
 #include "common.cuh"
+#include "project_trace_host.cuh"
 
 template<typename TileGEMM, typename Activation, flashmoe::MLPMatmulType mt, typename ElementC, typename Element>
 __device__ __forceinline__
@@ -578,8 +579,20 @@ void kickstart(const Options& opts) {
       }
     }
   };
+  // Record only the initial correctness launch. Timed repeats run after disabling tracing.
+#if FLASHMOE_PROJECT_TRACE
+  {
+    flashmoe::project_trace::Capture capture(blocks, epRank, world, opts.E);
+    flashMK(moeContext.topo, 1);
+    CHECK_CUDA(cudaPeekAtLastError());
+    capture.export_csv(stream);
+  }
+#else
+  if (std::getenv("FLASHMOE_TRACE_PREFIX"))
+    throw std::runtime_error("Trace requested from an uninstrumented build; use -DFLASHMOE_PROJECT_TRACE=ON");
   flashMK(moeContext.topo, 1);
   CHECK_CUDA(cudaPeekAtLastError());
+#endif
   // check correctness
   using ActType = flashmoe::ActivationType<AccumType, act>::AT;
   reference<Config, mt, GEMM0Sz, GEMM1Sz, ActType, AccumType>(moeContext.tokenIndices, tokens,
