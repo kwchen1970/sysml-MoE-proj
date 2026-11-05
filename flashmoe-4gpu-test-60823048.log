@@ -1,0 +1,26 @@
+Starting 4-GPU FlashMoE diagnostic
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/topo/topo.cpp:469: [GPU 2] Peer GPU 0 is not accessible, exiting ... 
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/init/init.cu:998: non-zero status: 3 building transport map failed 
+
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/init/init.cu:nvshmemi_check_state_and_init:1080: nvshmem initialization failed, exiting 
+
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/topo/topo.cpp:469: [GPU 3] Peer GPU 0 is not accessible, exiting ... 
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/init/init.cu:998: non-zero status: 3 building transport map failed 
+
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/init/init.cu:nvshmemi_check_state_and_init:1080: nvshmem initialization failed, exiting 
+
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/topo/topo.cpp:469: [GPU 0] Peer GPU 1 is not accessible, exiting ... 
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/init/init.cu:998: non-zero status: 3 building transport map failed 
+
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/init/init.cu:nvshmemi_check_state_and_init:1080: nvshmem initialization failed, exiting 
+
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/topo/topo.cpp:469: [GPU 1] Peer GPU 0 is not accessible, exiting ... 
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/init/init.cu:998: non-zero status: 3 building transport map failed 
+
+/tmp/nvshmem.rMeZStM/nvshmem_src/src/host/init/init.cu:nvshmemi_check_state_and_init:1080: nvshmem initialization failed, exiting 
+
+srun: error: nid003185: task 3: Exited with exit code 255
+srun: Terminating StepId=60823048.0
+[2026-11-04T22:22:27.092] error: *** STEP 60823048.0 ON nid003185 CANCELLED AT 2026-11-04T22:22:27 DUE TO TASK FAILURE ***
+srun: error: nid003185: tasks 0-2: Exited with exit code 255

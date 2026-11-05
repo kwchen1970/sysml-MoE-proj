@@ -16,6 +16,7 @@
 
 #include "common.cuh"
 #include "project_trace_host.cuh"
+#include "single_node_init.cuh"
 
 template<typename TileGEMM, typename Activation, flashmoe::MLPMatmulType mt, typename ElementC, typename Element>
 __device__ __forceinline__
@@ -313,9 +314,8 @@ void kickstart(const Options& opts) {
       .append(", E: ").append(std::to_string(opts.E))
       .append(", k: ").append(std::to_string(opts.k))};
 #endif
-  nvshmem_init();
-  const uint devId = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
-  CHECK_CUDA(cudaSetDevice(devId));
+  const auto runtime = flashmoe_bench::initialize();
+  const uint devId = runtime.device;
   cudaStream_t stream;
   CHECK_CUDA(cudaStreamCreate(&stream));
 
@@ -339,6 +339,8 @@ void kickstart(const Options& opts) {
     fflush(stdout); // ensures the header shows up first, especially relevant in large world size runs.
   }
   nvshmem_sync_all(); // this is needed to force initialization of NVSHMEM state.
+  std::fprintf(stderr, "[FlashMoE rank=%d] NVSHMEM device-state synchronization OK\n", epRank);
+  std::fflush(stderr);
 
   if (opts.E % world != 0) {
     throw std::runtime_error("E should be a multiple of world");
@@ -579,20 +581,13 @@ void kickstart(const Options& opts) {
       }
     }
   };
-  // Record only the initial correctness launch. Timed repeats run after disabling tracing.
-#if FLASHMOE_PROJECT_TRACE
-  {
-    flashmoe::project_trace::Capture capture(blocks, epRank, world, opts.E);
-    flashMK(moeContext.topo, 1);
-    CHECK_CUDA(cudaPeekAtLastError());
-    capture.export_csv(stream);
-  }
-#else
+  // Initial correctness launch is never traced.
+#if !FLASHMOE_PROJECT_TRACE
   if (std::getenv("FLASHMOE_TRACE_PREFIX"))
     throw std::runtime_error("Trace requested from an uninstrumented build; use -DFLASHMOE_PROJECT_TRACE=ON");
+#endif
   flashMK(moeContext.topo, 1);
   CHECK_CUDA(cudaPeekAtLastError());
-#endif
   // check correctness
   using ActType = flashmoe::ActivationType<AccumType, act>::AT;
   reference<Config, mt, GEMM0Sz, GEMM1Sz, ActType, AccumType>(moeContext.tokenIndices, tokens,
@@ -609,6 +604,10 @@ void kickstart(const Options& opts) {
   exec.sync();
   // calculate error percentage
   const auto ep =  (1.0 - (static_cast<double>(num_matches()) / static_cast<double>(tC.TotalSize()))) * 100;
+#if FLASHMOE_PROJECT_TRACE
+  // Reserve recording storage before warmup without enabling recording.
+  flashmoe::project_trace::Capture capture(blocks, epRank, world, opts.E);
+#endif
   cudaEvent_t start, stop;
   CHECK_CUDA(cudaEventCreate(&start));
   CHECK_CUDA(cudaEventCreate(&stop));
@@ -662,6 +661,17 @@ void kickstart(const Options& opts) {
     CHECK_CUDA(cudaEventElapsedTime(&m_ms, start, stop));
     m_time_ms = m_ms / static_cast<float>(opts.runs);
   }
+#if FLASHMOE_PROJECT_TRACE
+  if (capture.requested()) {
+    // A single ordinary launch AFTER warmup/timing, outside measured latency.
+    // Synchronize PEs so recording setup does not become artificial rank skew.
+    capture.start(stream);
+    MPI_Barrier(MPI_COMM_WORLD);
+    flashMK(moeContext.topo, 1);
+    CHECK_CUDA(cudaPeekAtLastError());
+    capture.export_csv(stream);
+  }
+#endif
   constexpr auto es = element_string<Element>();
   cudaDeviceProp prop{};
   CHECK_CUDA(cudaGetDeviceProperties(&prop, devId)); // Get properties for current rank
@@ -696,6 +706,7 @@ void kickstart(const Options& opts) {
   cudaEventDestroy(start);cudaEventDestroy(stop);
   nvshmem_finalize();
   cudaStreamDestroy(stream);
+  if (runtime.owns_mpi) MPI_Finalize();
 }
 
 __host__ __forceinline__

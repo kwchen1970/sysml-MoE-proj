@@ -25,7 +25,7 @@ def main():
     plots=defaultdict(list)
     for (ng,e),values in sorted(points.items()):
         plots[f"{ng} GPU"].append((e,statistics.mean(values),statistics.stdev(values) if len(values)>1 else 0))
-    lineplot(a.output/"waiting_vs_experts.svg",plots,"Recorded processor waiting; attribution requires dependency evidence","Waiting (% of recorded processor block-time)")
+    lineplot(a.output/"waiting_vs_experts.svg",plots,"GPU Block Waiting vs. Expert Count","GPU Block Waiting (%)")
     rank_lanes=defaultdict(list); rank_tasks=defaultdict(list)
     for key,events in groups.items():
         rank_lanes[key[:5]].extend(events)

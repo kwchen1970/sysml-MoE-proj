@@ -33,11 +33,16 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("measurements",type=Path,nargs="?")
     p.add_argument("--jo",type=Path,default=Path(__file__).resolve().parents[2]/"results/sweep_1node_all.csv")
+    p.add_argument("--no-reference",action="store_true",help="Plot only the new measurements")
     p.add_argument("--output",type=Path,required=True)
     a=p.parse_args(); a.output.mkdir(parents=True,exist_ok=True)
     sources=[]
-    if a.jo: sources.append(("Jo (pooled ranks/repeats)",*summarize(a.jo,True)))
-    if a.measurements: sources.append(("New (max rank per invocation)",*summarize(a.measurements)))
+    if a.jo and not a.no_reference:
+        sources.append(("Reference baseline (pooled ranks/repeats)", *summarize(a.jo, True)))
+
+    if a.measurements:
+        sources.append(("Measured (max rank per invocation)", *summarize(a.measurements)))
+    if not sources: p.error("Provide measurements or enable the reference")
     allrows=[]; groups={}
     for name,rows,error in sources:
         print(f"{name}: max output-element mismatch = {error:.6f}% (nonzero requires investigation)")

@@ -46,7 +46,7 @@ public:
       checked(cudaMalloc(reinterpret_cast<void**>(&buffer.events), sizeof(Event) * blocks * buffer.capacity));
       checked(cudaMalloc(reinterpret_cast<void**>(&buffer.lanes), sizeof(Lane) * blocks));
       checked(cudaMemset(buffer.lanes, 0, sizeof(Lane) * blocks));
-      checked(cudaMemcpyToSymbol(active, &buffer, sizeof(buffer)));
+      // Allocated before warmup; recording remains disabled until start().
     } catch (...) {
       cudaFree(buffer.lanes); cudaFree(buffer.events);
       throw;
@@ -60,6 +60,13 @@ public:
       cudaMemcpyToSymbol(active, &off, sizeof(off));
       cudaFree(buffer.lanes); cudaFree(buffer.events);
     }
+  }
+  bool requested() const { return buffer.lanes != nullptr; }
+  void start(cudaStream_t stream) {
+    if (!buffer.lanes) return;
+    checked(cudaStreamSynchronize(stream));
+    checked(cudaMemset(buffer.lanes, 0, sizeof(Lane) * blocks));
+    checked(cudaMemcpyToSymbol(active, &buffer, sizeof(buffer)));
   }
   void export_csv(cudaStream_t stream) {
     if (!buffer.lanes) return;

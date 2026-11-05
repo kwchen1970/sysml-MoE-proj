@@ -32,10 +32,13 @@ covering its lifetime; scheduler/subscriber roles are not separately traced.
 This records thread-0 observation at block boundaries, not per-warp utilization.
 
 Overflow increments a dropped counter without writing out of bounds.
-Exporter synchronizes, disables recording before timed repetitions, copies
+Exporter synchronizes after capture, disables recording and copies
 bounded records, refuses overwrites and rejects overflow. Intervals partition
 each processor window. Zero-length transitions produce no row.
-Capture is the initial correctness launch, before warmup. Recorder stores,
+Protocol v2 captures one ordinary launch AFTER warmup/timed repetitions.
+The initial correctness launch is unrecorded. Buffers are allocated before
+warmup; start() enables recording afterward, followed by an MPI barrier.
+Historical trace_1gpu files use the old initial-launch protocol. Recorder stores,
 extra completion barriers and register/shared resource changes can perturb it.
 Timed trace-build loops have recording disabled, so they do not measure
 active-recorder overhead. Do not infer overhead from cold versus warm launches.

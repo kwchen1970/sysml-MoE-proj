@@ -1,0 +1,191 @@
+[ 33%] Building CUDA object CMakeFiles/testFlashMoE.dir/tests/flashmoe.cu.o
+/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/wait/nvshmemi_wait_until_apis.cuh(53): warning #3013-D: a volatile function parameter is deprecated
+      volatile T *addr, T val, int caller) {
+                        ^
+          detected during:
+            instantiation of "nvshmemi_wait_until_greater_than_equals" based on template argument <volatile long> at line 68 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/coll/barrier.cuh
+            instantiation of "void nvshmemi_sync_algo_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 193 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/coll/barrier.cuh
+            instantiation of "void nvshmemi_barrier_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 38 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/device/nvshmem_coll_defines.cuh
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/coll/barrier.cuh(75): warning #3012-D: a volatile destination type for a compound assignment expression is deprecated
+      if (!myIdx) sync_counter[0] += 1;
+                  ^
+          detected during:
+            instantiation of "void nvshmemi_sync_algo_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 193
+            instantiation of "void nvshmemi_barrier_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 38 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/device/nvshmem_coll_defines.cuh
+
+/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/coll/barrier.cuh(127): warning #3012-D: a volatile destination type for a compound assignment expression is deprecated
+      if (!myIdx) sync_counter[0] += 1;
+                  ^
+          detected during:
+            instantiation of "void sync_dissem_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 171
+            instantiation of "void nvshmemi_sync_algo_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 193
+            instantiation of "void nvshmemi_barrier_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 38 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/device/nvshmem_coll_defines.cuh
+
+/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/coll/reduce.cuh(664): warning #3012-D: a volatile destination type for a compound assignment expression is deprecated
+      if (!myIdx) sync_counter[0] += 1;
+                  ^
+          detected during:
+            instantiation of "void nvshmemi_gpu_rdxn_threadgroup<TYPE,OP,SCOPE>(nvshmem_team_t, TYPE *, const TYPE *, size_t) [with TYPE=unsigned char, OP=RDXN_OPS_and, SCOPE=nvshmemi_threadgroup_thread]" at line 1196
+            instantiation of "void nvshmemi_reduce_threadgroup<TYPE,OP,SCOPE,ONSTREAM>(nvshmem_team_t, TYPE *, const TYPE *, size_t) [with TYPE=unsigned char, OP=RDXN_OPS_and, SCOPE=nvshmemi_threadgroup_thread, ONSTREAM=0]" at line 100 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/device/nvshmem_coll_defines.cuh
+
+ptxas info    : 258668 bytes gmem, 72 bytes cmem[3]
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EPlN4matx28RandomOperatorOutputIteratorINSD_6detail13tensor_impl_tIlLi0ENSD_13tensor_desc_tINS7_5arrayIxLm0EEESJ_Li0EEENSF_15DenseTensorDataIlEEEELb1EEEiS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EPlN4matx28RandomOperatorOutputIteratorINSD_6detail13tensor_impl_tIlLi0ENSD_13tensor_desc_tINS7_5arrayIxLm0EEESJ_Li0EEENSF_15DenseTensorDataIlEEEELb1EEEiS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 50 registers, used 1 barriers, 409 bytes cmem[0]
+ptxas info    : Compile time = 49.341 ms
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEENSC_28RandomOperatorOutputIteratorINSE_13tensor_impl_tIlLi0ENSL_INSM_IxLm0EEESV_Li0EEENSE_15DenseTensorDataIlEEEELb1EEEjS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEENSC_28RandomOperatorOutputIteratorINSE_13tensor_impl_tIlLi0ENSL_INSM_IxLm0EEESV_Li0EEENSE_15DenseTensorDataIlEEEELb1EEEjS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 54 registers, used 1 barriers, 505 bytes cmem[0]
+ptxas info    : Compile time = 118.379 ms
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EPlSC_iS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EPlSC_iS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 50 registers, used 1 barriers, 385 bytes cmem[0]
+ptxas info    : Compile time = 43.665 ms
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail6reduce18DeviceReduceKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEEjS9_lNS7_8identityEEEvT0_PT3_T1_NS0_13GridEvenShareISX_EET2_T4_' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail6reduce18DeviceReduceKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEEjS9_lNS7_8identityEEEvT0_PT3_T1_NS0_13GridEvenShareISX_EET2_T4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 53 registers, used 1 barriers, 510 bytes cmem[0]
+ptxas info    : Compile time = 122.489 ms
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEEPljS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEEPljS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 481 bytes cmem[0]
+ptxas info    : Compile time = 116.770 ms
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail11EmptyKernelIvEEvv' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail11EmptyKernelIvEEvv
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 4 registers, used 0 barriers, 352 bytes cmem[0]
+ptxas info    : Compile time = 0.506 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi32EEENS8_ILi2EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi32EEENS8_ILi2EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1728.532 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi32EEENS8_ILi2EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi32EEENS8_ILi2EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1497.638 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi32EEENS8_ILi2EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi32EEENS8_ILi2EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1641.610 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi32EEENS8_ILi2EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi32EEENS8_ILi2EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1393.596 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi32EEES6_NS4_ILi2EEEEEELi800ELi128ELNS_18GateReductionLevelE1ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi32EEES6_NS4_ILi2EEEEEELi800ELi128ELNS_18GateReductionLevelE1ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE
+    40 bytes stack frame, 36 bytes spill stores, 36 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 448 bytes cmem[0]
+ptxas info    : Compile time = 337.064 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi32EEES6_NS4_ILi2EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi32EEES6_NS4_ILi2EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 205 registers, used 1 barriers, 448 bytes cmem[0]
+ptxas info    : Compile time = 280.811 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi16EEENS4_ILi32EEENS4_ILi2EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi16EEENS4_ILi32EEENS4_ILi2EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 119 registers, used 1 barriers, 448 bytes cmem[0]
+ptxas info    : Compile time = 125.353 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi8EEENS4_ILi32EEENS4_ILi2EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi8EEENS4_ILi32EEENS4_ILi2EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 110 registers, used 1 barriers, 448 bytes cmem[0]
+ptxas info    : Compile time = 79.098 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe2bIEPN4cuda3__47barrierILNS0_3std3__412thread_scopeE1ENS4_18__empty_completionEEEj' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe2bIEPN4cuda3__47barrierILNS0_3std3__412thread_scopeE1ENS4_18__empty_completionEEEj
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 8 registers, used 0 barriers, 364 bytes cmem[0]
+ptxas info    : Compile time = 0.941 ms
+ptxas info    : Compiling entry function '_Z16combineReferenceI13__nv_bfloat16EviiiiiPKT_PKN8flashmoe3TPSEPS1_' for 'sm_80'
+ptxas info    : Function properties for _Z16combineReferenceI13__nv_bfloat16EviiiiiPKT_PKN8flashmoe3TPSEPS1_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 14 registers, used 0 barriers, 400 bytes cmem[0]
+ptxas info    : Compile time = 2.648 ms
+ptxas info    : Compiling entry function '_Z12gatherTokensI13__nv_bfloat16EvPKN8flashmoe3TPSEPKT_PS5_jijj' for 'sm_80'
+ptxas info    : Function properties for _Z12gatherTokensI13__nv_bfloat16EvPKN8flashmoe3TPSEPKT_PS5_jijj
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 11 registers, used 0 barriers, 392 bytes cmem[0]
+ptxas info    : Compile time = 1.628 ms
+ptxas info    : Compiling entry function '_Z2gkIN8flashmoe4tile18CollectiveMainloopILi128ELi128ELi32ELi800E13__nv_bfloat16fLi128ELi2ELNS1_11TF32ComputeE0ELN8cublasdx11arrangementE1ELS6_0ELS6_1ELi16ELi16ELi16EEENS5_8identityELNS0_13MLPMatmulTypeE1ES3_S3_EvPKT2_SC_SC_PT3_PKSD_SG_NT_9AccumTypeESI_iii' for 'sm_80'
+ptxas info    : Function properties for _Z2gkIN8flashmoe4tile18CollectiveMainloopILi128ELi128ELi32ELi800E13__nv_bfloat16fLi128ELi2ELNS1_11TF32ComputeE0ELN8cublasdx11arrangementE1ELS6_0ELS6_1ELi16ELi16ELi16EEENS5_8identityELNS0_13MLPMatmulTypeE1ES3_S3_EvPKT2_SC_SC_PT3_PKSD_SG_NT_9AccumTypeESI_iii
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 218 registers, used 1 barriers, 420 bytes cmem[0]
+ptxas info    : Compile time = 73.085 ms
+ptxas info    : Compiling entry function '_Z2gkIN8flashmoe4tile18CollectiveMainloopILi128ELi128ELi32ELi800E13__nv_bfloat16fLi128ELi2ELNS1_11TF32ComputeE0ELN8cublasdx11arrangementE1ELS6_0ELS6_1ELi16ELi16ELi16EEEN7cutlass8epilogue6thread4SiLuIfEELNS0_13MLPMatmulTypeE0ES3_S3_EvPKT2_SG_SG_PT3_PKSH_SK_NT_9AccumTypeESM_iii' for 'sm_80'
+ptxas info    : Function properties for _Z2gkIN8flashmoe4tile18CollectiveMainloopILi128ELi128ELi32ELi800E13__nv_bfloat16fLi128ELi2ELNS1_11TF32ComputeE0ELN8cublasdx11arrangementE1ELS6_0ELS6_1ELi16ELi16ELi16EEEN7cutlass8epilogue6thread4SiLuIfEELNS0_13MLPMatmulTypeE0ES3_S3_EvPKT2_SG_SG_PT3_PKSH_SK_NT_9AccumTypeESM_iii
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 235 registers, used 1 barriers, 420 bytes cmem[0]
+ptxas info    : Compile time = 629.614 ms
+ptxas info    : Compiling entry function '_Z19generateRandUniformILi800ELb0ELb0E13__nv_bfloat16EvPT2_mlffy' for 'sm_80'
+ptxas info    : Function properties for _Z19generateRandUniformILi800ELb0ELb0E13__nv_bfloat16EvPT2_mlffy
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 14 registers, used 0 barriers, 392 bytes cmem[0]
+ptxas info    : Compile time = 4.153 ms
+ptxas info    : Compiling entry function '_Z19generateRandUniformILi800ELb1ELb0E13__nv_bfloat16EvPT2_mlffy' for 'sm_80'
+ptxas info    : Function properties for _Z19generateRandUniformILi800ELb1ELb0E13__nv_bfloat16EvPT2_mlffy
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers, 392 bytes cmem[0]
+ptxas info    : Compile time = 3.251 ms
+ptxas info    : Function properties for _Z14nvshmemi_quietIL13threadgroup_t2EEvv
+    8 bytes stack frame, 8 bytes spill stores, 8 bytes spill loads
+ptxas info    : Compile time = 1.749 ms
+ptxas info    : Function properties for _Z14nvshmemi_quietIL13threadgroup_t1EEvv
+    8 bytes stack frame, 8 bytes spill stores, 8 bytes spill loads
+ptxas info    : Compile time = 1.784 ms
+ptxas info    : Function properties for _Z14nvshmemi_quietIL13threadgroup_t0EEvv
+    8 bytes stack frame, 8 bytes spill stores, 8 bytes spill loads
+ptxas info    : Compile time = 1.403 ms
+[ 66%] Linking CUDA device code CMakeFiles/testFlashMoE.dir/cmake_device_link.o
+[100%] Linking CXX executable testFlashMoE
+[100%] Built target testFlashMoE
+Starting 4-GPU FlashMoE diagnostic; job=60823864
+NVSHMEM_REMOTE_TRANSPORT=none NVSHMEM_BOOTSTRAP=MPI
+[FlashMoE rank=0 local_rank=0/4] CUDA_VISIBLE_DEVICES=0,1,2,3 visible_count=4 SLURM_LOCALID=0 remote_transport=none
+[FlashMoE rank=1 local_rank=1/4] CUDA_VISIBLE_DEVICES=0,1,2,3 visible_count=4 SLURM_LOCALID=1 remote_transport=none
+[FlashMoE rank=2 local_rank=2/4] CUDA_VISIBLE_DEVICES=0,1,2,3 visible_count=4 SLURM_LOCALID=2 remote_transport=none
+[FlashMoE rank=3 local_rank=3/4] CUDA_VISIBLE_DEVICES=0,1,2,3 visible_count=4 SLURM_LOCALID=3 remote_transport=none
+[FlashMoE rank=0] selected_ordinal=0 GPU=NVIDIA A100-SXM4-40GB UUID=ebf84aef5e0980ae9fedb697b4667b39 PCI=0000:03:00.0
+[FlashMoE rank=1] selected_ordinal=1 GPU=NVIDIA A100-SXM4-40GB UUID=52f6cda0626d68ad9ed020dd566c81d8 PCI=0000:41:00.0
+[FlashMoE rank=3] selected_ordinal=3 GPU=NVIDIA A100-SXM4-40GB UUID=2a5824afb196394eb4db650fdaf3a9b3 PCI=0000:C1:00.0
+[FlashMoE rank=2] selected_ordinal=2 GPU=NVIDIA A100-SXM4-40GB UUID=43405450c2aca71cff1062f7c51b79c8 PCI=0000:82:00.0
+[FlashMoE rank=0] peer_local_rank=1 peer_ordinal=1 P2P=1
+[FlashMoE rank=0] peer_local_rank=2 peer_ordinal=2 P2P=1
+[FlashMoE rank=0] peer_local_rank=3 peer_ordinal=3 P2P=1
+[FlashMoE rank=1] peer_local_rank=0 peer_ordinal=0 P2P=1
+[FlashMoE rank=1] peer_local_rank=2 peer_ordinal=2 P2P=1
+[FlashMoE rank=1] peer_local_rank=3 peer_ordinal=3 P2P=1
+[FlashMoE rank=2] peer_local_rank=0 peer_ordinal=0 P2P=1
+[FlashMoE rank=2] peer_local_rank=1 peer_ordinal=1 P2P=1
+[FlashMoE rank=2] peer_local_rank=3 peer_ordinal=3 P2P=1
+[FlashMoE rank=3] peer_local_rank=0 peer_ordinal=0 P2P=1
+[FlashMoE rank=3] peer_local_rank=1 peer_ordinal=1 P2P=1
+[FlashMoE rank=3] peer_local_rank=2 peer_ordinal=2 P2P=1
+[FlashMoE rank=0] distinct GPU/P2P preflight OK; NVSHMEM init BEGIN
+[FlashMoE rank=1] distinct GPU/P2P preflight OK; NVSHMEM init BEGIN
+[FlashMoE rank=2] distinct GPU/P2P preflight OK; NVSHMEM init BEGIN
+[FlashMoE rank=3] distinct GPU/P2P preflight OK; NVSHMEM init BEGIN
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+[FlashMoE rank=0] NVSHMEM init returned OK (PE=0/4); device-state synchronization BEGIN
+[FlashMoE rank=0] NVSHMEM device-state synchronization OK
+[FlashMoE rank=1] NVSHMEM init returned OK (PE=1/4); device-state synchronization BEGIN
+[FlashMoE rank=1] NVSHMEM device-state synchronization OK
+[FlashMoE rank=2] NVSHMEM init returned OK (PE=2/4); device-state synchronization BEGIN
+[FlashMoE rank=2] NVSHMEM device-state synchronization OK
+[FlashMoE rank=3] NVSHMEM init returned OK (PE=3/4); device-state synchronization BEGIN
+[FlashMoE rank=3] NVSHMEM device-state synchronization OK
+0, bf16, 4096, 2048, 1408, 16, 6, 4.449472, 0.064027, 1536, NVIDIA A100-SXM4-40GB, sm_80, SingleNode, Gated, 128, 128, 32, 128, 32, 128, 2, 108, 216, 8.0e-02, 8.0e-03, 1, 1, 1, 450.992702
+1, bf16, 4096, 2048, 1408, 16, 6, 4.378592, 0.060987, 1536, NVIDIA A100-SXM4-40GB, sm_80, SingleNode, Gated, 128, 128, 32, 128, 32, 128, 2, 108, 216, 8.0e-02, 8.0e-03, 1, 1, 1, 450.992702
+2, bf16, 4096, 2048, 1408, 16, 6, 4.352128, 0.072312, 1536, NVIDIA A100-SXM4-40GB, sm_80, SingleNode, Gated, 128, 128, 32, 128, 32, 128, 2, 108, 216, 8.0e-02, 8.0e-03, 1, 1, 1, 450.992702
+3, bf16, 4096, 2048, 1408, 16, 6, 4.406176, 0.075340, 1536, NVIDIA A100-SXM4-40GB, sm_80, SingleNode, Gated, 128, 128, 32, 128, 32, 128, 2, 108, 216, 8.0e-02, 8.0e-03, 1, 1, 1, 450.992702
+FlashMoE diagnostic completed

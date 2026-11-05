@@ -1,0 +1,16 @@
+invocation=0 repetition=3 GPUs=1 experts=16
+invocation=1 repetition=2 GPUs=1 experts=16
+invocation=2 repetition=3 GPUs=1 experts=128
+invocation=3 repetition=4 GPUs=1 experts=128
+invocation=4 repetition=1 GPUs=1 experts=16
+invocation=5 repetition=2 GPUs=1 experts=64
+invocation=6 repetition=3 GPUs=1 experts=64
+invocation=7 repetition=0 GPUs=1 experts=128
+invocation=8 repetition=2 GPUs=1 experts=128
+invocation=9 repetition=4 GPUs=1 experts=16
+invocation=10 repetition=0 GPUs=1 experts=64
+invocation=11 repetition=1 GPUs=1 experts=64
+invocation=12 repetition=4 GPUs=1 experts=64
+invocation=13 repetition=0 GPUs=1 experts=16
+invocation=14 repetition=1 GPUs=1 experts=128
+Results: /pscratch/sd/k/kc994/moe/expert_granularity/20261104T132950Z-60789746

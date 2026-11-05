@@ -1,0 +1,2 @@
+invocation=0 repetition=3 GPUs=4 experts=16
+[2026-11-04T14:57:53.126] error: *** JOB 60789747 ON nid003588 CANCELLED AT 2026-11-04T14:57:53 DUE TO TIME LIMIT ***

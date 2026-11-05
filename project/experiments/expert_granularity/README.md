@@ -1,5 +1,8 @@
 # Expert granularity experiment
 
+For the current combined study, follow [RUN_1VS4.md](RUN_1VS4.md).
+It includes ordered rebuild/submission commands and all comparison plots.
+
 Question: At fixed tokens/GPU and top-k, how does expert count affect latency
 and processor waiting? Optional CUDA instrumentation is included in the team repository; reference repositories remain unchanged.
 
@@ -81,8 +84,9 @@ sbatch -A YOUR_ACCOUNT project/scripts/expert_granularity/trace.sbatch --gpus 1 
 ```
 
 Begin with one GPU; later use --gpus 1 4. Jobs do not build dependencies.
-Capture records the initial correctness launch, before warmup, then is disabled
-before timed repeats. Timelines describe that initial launch, not steady state.
+Capture now records one ordinary launch after warmup and timed repeats.
+The initial correctness launch and the timed repeats are unrecorded.
+Old trace_1gpu outputs are initial-launch captures and must remain separately labeled.
 Trace-build timed results still reflect the instrumentation resource footprint;
 keep regular and trace builds/results separate. No active-recorder slowdown
 measurement is currently implemented.
@@ -113,3 +117,45 @@ are NOT measurements of scheduler cost by themselves.
 All timeline, waiting and work-bound figures also export PNG, SVG and PDF
 with the same filename stem. Existing plotting commands still work; an
 --output timeline.svg request now also writes timeline.png and timeline.pdf.
+
+## Single-node NVSHMEM GPU visibility
+
+Use `launch_single_node.sh` for both diagnostics and baseline/trace runs.
+Four ranks share the allocated GPU set (`--gpus-per-node=4 --gpu-bind=none`);
+do not combine this with `--gpus-per-task=1`, manually narrow
+CUDA_VISIBLE_DEVICES, or unset Slurm's allocation-provided visibility.
+The 1-GPU path retains `--gpus-per-task=1 --gpu-bind=closest`.
+
+The benchmark initializes MPI, obtains the shared-memory local rank, selects
+that visible ordinal BEFORE explicit MPI-communicator NVSHMEM initialization,
+and checks distinct physical UUIDs and CUDA P2P capability. Insufficient
+visibility, duplicate UUIDs or inaccessible peers abort the whole MPI job.
+Diagnostics print visibility, ordinal, UUID, PCI bus, peer capability and both
+NVSHMEM host-init and deferred device-state synchronization stages.
+The helper is intentionally limited to one node (current experiment scope).
+
+NVSHMEM_REMOTE_TRANSPORT=none disables off-node transports; intra-node CUDA
+P2P/NVLink remains required and enabled. GDRCopy/NCCL settings are unchanged;
+MPI here exchanges host metadata, so MPICH_GPU_SUPPORT_ENABLED=0 is retained.
+No remote-transport fallback is added to hide missing peer visibility.
+
+From the repository root, submit manually (use your authorized account):
+
+```bash
+sbatch -A m4999_g -C 'gpu&hbm40g' gpu4_flashmoe_test.sbatch
+```
+
+The diagnostic incrementally rebuilds testFlashMoE inside its allocation
+(maximum 240 seconds), then runs a 180-second-bounded 4-rank test.
+The job has a 10-minute limit. A rebuild failure/timeout prevents the test;
+it never silently runs a stale binary. REBUILD=0 is available only if you
+have already rebuilt the changed source. Rebuild the trace binary separately
+before trace experiments. Do not interpret diagnostic timing as a baseline.
+
+CPU-only launch checks (srun is stubbed; no jobs submitted):
+`python project/tests/expert_granularity/test_launch.py`.
+Real GPU/P2P/NVSHMEM success remains unverified until the diagnostic runs.
+
+References:
+- https://docs.nvidia.com/nvshmem/api/latest/faq.html
+- https://docs.nvidia.com/nvshmem/release-notes-install-guide/best-practice-guide/performance.html

@@ -1,0 +1,7 @@
+source,ngpu,S,H,I,E,k,mean_ms,std_ms,n
+Measured (max rank per invocation),1,4096,2048,1408,16,6,4.475053,0.022499508116845753,5
+Measured (max rank per invocation),1,4096,2048,1408,64,6,4.8106306,0.007687035533936476,5
+Measured (max rank per invocation),1,4096,2048,1408,128,6,6.3902938,0.04051829265529356,5
+Measured (max rank per invocation),4,4096,2048,1408,16,6,4.3919792,0.00570112644132716,5
+Measured (max rank per invocation),4,4096,2048,1408,64,6,4.6455144,0.003465239068231828,5
+Measured (max rank per invocation),4,4096,2048,1408,128,6,6.6324032,0.03681132162392461,5

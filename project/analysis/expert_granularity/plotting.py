@@ -40,7 +40,7 @@ def lineplot(path, groups, title, ylabel):
                     marker="o", capsize=4, linewidth=1.8,
                     color=COLORS[i % len(COLORS)], label=label)
     ax.set_xticks(range(len(xs)), [str(x) for x in xs])
-    ax.set_xlabel("Experts (equally spaced categories)")
+    ax.set_xlabel("Number of Experts")
     ax.set_ylabel(ylabel)
     ax.set_title(textwrap.fill(title, 85), pad=12)
     ax.set_ylim(bottom=0)

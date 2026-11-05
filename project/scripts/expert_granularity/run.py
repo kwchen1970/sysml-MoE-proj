@@ -44,10 +44,11 @@ def main():
                 binary=str(binary), binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                 job_id=os.environ["SLURM_JOB_ID"], order_seed=a.seed, routing_seeds="uncontrolled benchmark random_device",
                 timing_scope="dispatch/expert/combine; excludes gate",
-                trace_scope="initial correctness launch only" if a.device_trace else "disabled",
+                trace_scope="one post-warmup launch after timed repeats" if a.device_trace else "disabled",
                 timing_note="trace-build timed repeats have recorder disabled" if a.device_trace else "baseline", arguments=vars(a).copy(),
                 environment={k: os.environ.get(k) for k in ("MATHDX_ROOT", "CUDA_HOME", "NVSHMEM_HOME", "NVSHMEM_REMOTE_TRANSPORT", "LOADEDMODULES")})
-    source_paths = ["csrc/CMakeLists.txt", "csrc/tests/flashmoe.cu", "csrc/tests/project_trace_host.cuh",
+    source_paths = ["csrc/CMakeLists.txt", "csrc/tests/flashmoe.cu", "csrc/tests/project_trace_host.cuh", "csrc/tests/single_node_init.cuh",
+                    "project/scripts/expert_granularity/launch_single_node.sh",
                     "csrc/include/flashmoe/infra/project_trace.cuh", "csrc/include/flashmoe/processor.cuh",
                     "csrc/include/flashmoe/moe.cuh", "project/scripts/expert_granularity/run.py"]
     meta["source_sha256"] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -63,7 +64,7 @@ def main():
     with (out / "measurements.csv").open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["run_id", "invocation", "repetition", "ngpu"] + FIELDS); w.writeheader()
         for inv, (rep, ng, e) in enumerate(jobs):
-            cmd = ["srun", "--ntasks="+str(ng), "--gpus-per-task=1", "--gpu-bind=closest", str(binary), "4096", "2048", "1408", str(e), "6", "8", "128", "128"]
+            cmd = ["bash", str(Path(__file__).resolve().with_name("launch_single_node.sh")), str(ng), str(binary), "4096", "2048", "1408", str(e), "6", "8", "128", "128"]
             (out / f"{inv:03d}.command.json").write_text(json.dumps(cmd))
             print(f"invocation={inv} repetition={rep} GPUs={ng} experts={e}", flush=True)
             env = os.environ.copy()

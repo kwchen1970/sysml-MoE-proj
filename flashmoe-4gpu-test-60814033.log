@@ -1,0 +1,15 @@
+Starting 4-GPU FlashMoE diagnostic
+</global/homes/k/kc994/cs5470/final_proj/sysml-MoE-proj/csrc/tests/flashmoe.cu:318> cudaSetDevice(devId):
+    cudaErrorInvalidDevice: invalid device ordinal
+</global/homes/k/kc994/cs5470/final_proj/sysml-MoE-proj/csrc/tests/flashmoe.cu:318> cudaSetDevice(devId):
+    cudaErrorInvalidDevice: invalid device ordinal
+</global/homes/k/kc994/cs5470/final_proj/sysml-MoE-proj/csrc/tests/flashmoe.cu:318> cudaSetDevice(devId):
+    cudaErrorInvalidDevice: invalid device ordinal
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+srun: forcing job termination
+srun: got SIGCONT
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+[2026-11-04T21:14:51.378] error: *** STEP 60814033.0 ON nid001205 CANCELLED AT 2026-11-04T21:14:51 DUE to SIGNAL Killed ***
+srun: error: nid001205: tasks 1-3: Killed
+srun: Terminating StepId=60814033.0
+srun: error: nid001205: task 0: Killed

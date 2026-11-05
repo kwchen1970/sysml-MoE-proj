@@ -12,4 +12,6 @@ REPO="${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}"
 cd "$REPO"
 source project/scripts/expert_granularity/env.sh
 export PATH="/global/homes/k/kc994/.conda/envs/sysml/bin:$PATH"
+
+# run.py uses the shared NVSHMEM-compatible single-node launcher.
 python3 project/scripts/expert_granularity/run.py "${@}"
