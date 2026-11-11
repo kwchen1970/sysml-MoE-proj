@@ -187,7 +187,12 @@ namespace flashmoe::moe
       ctx.symHeap, ctx.nLx, roundEC, kArgs.H, sizeof(DataType)
     };
     const auto processors = gridDim.x - 1;
-    const auto dispatchProcessors = cute::max((processors * 3) / 4, 1); // 75%
+    // Hypothesis: reserving 3/4 of the CTAs for dispatch keeps them out of the
+    // processor loop until the token copy finishes. On one node that copy is
+    // small, so most SMs sit out of the GEMMs. Keep a quarter for dispatch
+    // and let the rest enter the processor immediately. Dispatch still covers
+    // every expert; it just uses fewer CTAs.
+    const auto dispatchProcessors = cute::max(processors / 4, 1u);
     const auto superBlockSize = min(dispatchSuperBlockSize(kArgs.E), dispatchProcessors);
     const auto dispatchBlocks = cuda::round_down(cute::min(superBlockSize * kArgs.E, MAX_DISPATCH_BLOCKS, dispatchProcessors), superBlockSize);
     if (blockIdx.x == gridDim.x - 1) {
