@@ -15,10 +15,12 @@
 #include <cute/numeric/integral_constant.hpp>
 #include <cutlass/array.h>
 
+#include "infra/affinity.cuh"
 #include "infra/constants.cuh"
 #include "infra/bitset.cuh"
 #include "infra/checks.cuh"
 #include "infra/dq.cuh"
+#include "infra/task.cuh"
 #include "infra/tq.cuh"
 
 namespace flashmoe::scheduler
@@ -303,6 +305,196 @@ namespace flashmoe::scheduler
     }
   }
 
+  // Issue at most one wave of free CTAs, preferring two experts whose weights
+  // fit together in L2. Global (GEMM1) queues are consumed only when this
+  // wave actually takes them, so a deferred queue stays visible.
+  template <
+    unsigned int subscribers,
+    int processor_state_size
+  >
+  __device__ __forceinline__
+  void runAffinity(cutlass::Array<TQState, (subscribers / SCHEDULER_COUNT) + QUEUE_STATE_SIZE>& tqState,
+                   const uint& processors,
+                   const cuda::fast_mod_div<uint>& processors_v,
+                   const unsigned int& tilesN1,
+                   const unsigned int& sO,
+                   const unsigned int& gtQCL,
+                   BitSet* __restrict__ const& bitSet,
+                   unsigned int* __restrict__ const& tQHeads,
+                   unsigned int* __restrict__ const& gtQHeads,
+                   unsigned int* __restrict__ const& taskBound,
+                   uint* __restrict__ const& rQ,
+                   unsigned int* __restrict__ const& sQ,
+                   TQSignal* __restrict__ const& pDB,
+                   Task* __restrict__ const& tQ,
+                   const uint& nLx,
+                   const uint& ecTilesM,
+                   const uint& dT,
+                   uint& gRQIdx,
+                   uint& processorTally,
+                   uint& scheduled,
+                   uint& tTB) {
+    constexpr auto schedulerCount = SCHEDULER_COUNT;
+    constexpr int sL = static_cast<int>(subscribers / schedulerCount);
+    constexpr auto dQL = QUEUE_STATE_SIZE;
+    constexpr auto bSw = sizeof(uint) * 8U;
+    constexpr int kLocal = sL + dQL;
+    constexpr int subCount = static_cast<int>(subscribers);
+    constexpr int schedCount = schedulerCount;
+    static_assert(kLocal <= 24);
+    __shared__ unsigned affHist[256];
+    __shared__ unsigned affChoice[2];
+    __shared__ unsigned affLaneHot[32];
+    __shared__ unsigned affLaneCold[32];
+    __shared__ unsigned affHotBudget[32];
+    __shared__ unsigned affColdBudget[32];
+
+    unsigned sticky0 = kNoExpert;
+    unsigned sticky1 = kNoExpert;
+    uint window = 0;
+    const uint nWindows = dT + 1;
+    while (scheduled < tTB) {
+      LocalQueue local[kLocal];
+      unsigned take[kLocal];
+      #pragma unroll
+      for (int i = 0; i < kLocal; ++i) {
+        local[i] = LocalQueue{kNoExpert, 0u, false};
+        take[i] = 0u;
+        tqState[i].tasks = 0u;
+      }
+      #pragma unroll
+      for (uint i = 0; i < sL; ++i) {
+        auto* __restrict__ tqHp = tQHeads + (i * schedulerCount + threadIdx.x);
+        cuda::atomic_ref<unsigned int, cuda::thread_scope_block> tqh{*tqHp};
+        const unsigned pending = tqh.load(cuda::memory_order_acquire) - tqState[i].tQTail;
+        if (pending) {
+          const uint tid = i * schedulerCount + threadIdx.x;
+          const uint index = DQ::next<DQType::stride, subCount>(tid, tqState[i].tQTail);
+          local[i] = LocalQueue{static_cast<unsigned>(tQ[index].localExpertIdx()), pending, false};
+        }
+      }
+
+      const uint gw = window % nWindows;
+      const uint sBIdx = threadIdx.x + (gw * dQL / bSw) * schedulerCount;
+      auto sBS = bitSet[sBIdx];
+      #pragma unroll
+      for (uint pJ = 0; pJ < dQL; ++pJ) {
+        const uint qIdx = schedulerCount * (dQL * gw + pJ) + threadIdx.x;
+        const uint bIdx = (gw * dQL + pJ) % bSw;
+        unsigned tasks = 0u;
+        unsigned expert = kNoExpert;
+        if (qIdx < gtQCL && !sBS.get(bIdx)) {
+          cuda::atomic_ref<unsigned int, cuda::thread_scope_device> gtqH{*(gtQHeads + qIdx)};
+          tasks = gtqH.load(cuda::memory_order_acquire);
+          if (tasks) {
+            const unsigned group = qIdx / ecTilesM;
+            expert = group % nLx;
+          }
+        }
+        local[sL + pJ] = LocalQueue{expert, tasks, true};
+        tqState[sL + pJ].tQTail = 0u;
+      }
+
+      if (threadIdx.x == 0) {
+        for (unsigned e = 0; e < nLx; ++e) {
+          affHist[e] = 0u;
+        }
+      }
+      __syncwarp();
+      #pragma unroll
+      for (int i = 0; i < kLocal; ++i) {
+        if (local[i].tasks && local[i].expert < nLx) {
+          atomicAdd(affHist + local[i].expert, local[i].tasks);
+        }
+      }
+      __syncwarp();
+      if (threadIdx.x == 0) {
+        unsigned hot0 = kNoExpert;
+        unsigned hot1 = kNoExpert;
+        chooseHotExperts(affHist, nLx, sticky0, sticky1, hot0, hot1);
+        affChoice[0] = hot0;
+        affChoice[1] = hot1;
+      }
+      __syncwarp();
+      const unsigned hot0 = affChoice[0];
+      const unsigned hot1 = affChoice[1];
+      unsigned hotLocal = 0u;
+      unsigned coldLocal = 0u;
+      #pragma unroll
+      for (int i = 0; i < kLocal; ++i) {
+        if (!local[i].tasks) {
+          continue;
+        }
+        if (isHotExpert(local[i].expert, hot0, hot1)) {
+          hotLocal += local[i].tasks;
+        } else {
+          coldLocal += local[i].tasks;
+        }
+      }
+      affLaneHot[threadIdx.x] = hotLocal;
+      affLaneCold[threadIdx.x] = coldLocal;
+      __syncwarp();
+      const unsigned slots = processorTally == 0 ? processors : processorTally;
+      if (threadIdx.x == 0) {
+        unsigned hotTotal = 0u;
+        for (unsigned e = 0; e < nLx; ++e) {
+          if (isHotExpert(e, hot0, hot1)) {
+            hotTotal += affHist[e];
+          }
+        }
+        const bool admitCold = hotTotal < slots;
+        clampToSlots(affLaneHot, schedulerCount, admitCold ? 0xffffffffu : slots, affHotBudget);
+        const unsigned coldSlots = admitCold && slots > hotTotal ? slots - hotTotal : 0u;
+        clampToSlots(affLaneCold, schedulerCount, coldSlots, affColdBudget);
+      }
+      __syncwarp();
+      assignQueues(local, static_cast<unsigned>(kLocal), hot0, hot1,
+                   affHotBudget[threadIdx.x], affColdBudget[threadIdx.x], take);
+
+      bool dirty = false;
+      #pragma unroll
+      for (uint pJ = 0; pJ < dQL; ++pJ) {
+        const uint slot = sL + pJ;
+        if (take[slot] == 0 || local[slot].tasks == 0) {
+          continue;
+        }
+        const uint qIdx = schedulerCount * (dQL * gw + pJ) + threadIdx.x;
+        const uint bIdx = (gw * dQL + pJ) % bSw;
+        sBS.set(bIdx);
+        dirty = true;
+        cuda::atomic_ref<unsigned int, cuda::thread_scope_device> gtqH{*(gtQHeads + qIdx)};
+        gtqH.store(tQHeadGroundState, cuda::memory_order_relaxed);
+        tqState[slot].tasks = local[slot].tasks;
+        tqState[slot].tQTail = 0u;
+      }
+      if (dirty) {
+        bitSet[sBIdx] = sBS;
+      }
+      #pragma unroll
+      for (uint i = 0; i < sL; ++i) {
+        tqState[i].tasks = take[i];
+      }
+      uint lTt = 0u;
+      #pragma unroll
+      for (int i = 0; i < kLocal; ++i) {
+        lTt += tqState[i].tasks;
+      }
+      schedulerLoop<processor_state_size, subCount, sL, schedCount>(
+        tqState, processors, processors_v, tilesN1, sO, dQL * gw, lTt,
+        processorTally, gRQIdx, scheduled, sQ, rQ, pDB, true);
+
+      sticky0 = hot0;
+      sticky1 = hot1;
+      window = gw + 1;
+      if (!threadIdx.x) {
+        cuda::atomic_ref<unsigned int, cuda::thread_scope_block> tb{*taskBound};
+        tTB = tb.load(cuda::memory_order_relaxed);
+      }
+      __syncwarp();
+      tTB = __shfl_sync(0xffffffff, tTB, 0);
+    }
+  }
+
   template <
     unsigned int subscribers,
     int processor_state_size = PROCESSOR_STATE_SIZE
@@ -321,7 +513,10 @@ namespace flashmoe::scheduler
              unsigned int* __restrict__ const& taskBound, // shared
              unsigned int* __restrict__ const& rQ, // shared
              unsigned int* __restrict__ const& sQ, // global
-             TQSignal* __restrict__ const& pDB) {
+             TQSignal* __restrict__ const& pDB,
+             Task* __restrict__ const tQ = nullptr,
+             const uint nLx = 0,
+             const uint ecTilesM = 0) {
     static_assert(processor_state_size <= PROCESSOR_STATE_SIZE);
     static_assert(sizeof(TQSignal) == sizeof(uint64_t) && alignof(TQSignal) == alignof(uint64_t));
     // Assumptions are below, will assert them host-side
@@ -346,7 +541,16 @@ namespace flashmoe::scheduler
       tTB = tb.load(cuda::memory_order_relaxed);
     }
     tTB = __shfl_sync(0xffffffff, tTB, 0);
-    while (scheduled < tTB) {
+    bool ranAffinity = false;
+    if constexpr ((sL + dQL) <= 24) {
+      if (tQ != nullptr && nLx > 0 && nLx <= 256 && ecTilesM > 0) {
+        runAffinity<subscribers, processor_state_size>(
+          tqState, processors, processors_v, tilesN1, sO, gtQCL, bitSet, tQHeads, gtQHeads,
+          taskBound, rQ, sQ, pDB, tQ, nLx, ecTilesM, dT, gRQIdx, processorTally, scheduled, tTB);
+        ranAffinity = true;
+      }
+    }
+    if (!ranAffinity) while (scheduled < tTB) {
       // statically sweep tQ for tasks
       uint lTt = 0U; // local task tally
       #pragma unroll

@@ -241,7 +241,8 @@ namespace flashmoe::os
       auto* __restrict__ sQ = ctx.statusQueue;
       auto* pDB = ctx.tqs;
       scheduler::start<subscriberCount, pss>(interruptScratch, schedulerBitSet, processors, ctx.processors_v, tilesN1,
-      sO, gtQCl, interrupt, tQHeads, gtQHeads, taskBound, rQ, sQ, pDB);
+      sO, gtQCl, interrupt, tQHeads, gtQHeads, taskBound, rQ, sQ, pDB, ctx.tQ,
+      static_cast<uint>(ctx.nLx), static_cast<uint>(ecTilesM));
     }
     else {
       const auto tIdx = threadIdx.x - WARP_SIZE;
