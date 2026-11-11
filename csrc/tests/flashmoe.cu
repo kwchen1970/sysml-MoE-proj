@@ -800,7 +800,9 @@ void drive(const int argc, char** argv) {
   if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
     throw std::invalid_argument("I is invalid");
   }
-  constexpr auto pS = arch >= 900 ? 3 : arch >= 800 ? 2 : 1; // Hopper 3
+  // Hypothesis: on A100 a 32-wide K step does not cover its own load.
+  // Three stages match Hopper. Gated GEMM0 shared memory grows 64 KB -> 80 KB.
+  constexpr auto pS = arch >= 800 ? 3 : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128; // hopper, S >= 4096 -> bM = 256
   static_assert(bM >= 1);
   if (S < 1 || (S > bM && S % bM != 0)) {

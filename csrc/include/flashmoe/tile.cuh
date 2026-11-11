@@ -89,7 +89,10 @@ namespace flashmoe::heuristics {
   template<int K, int bK, int Arch>
   consteval int getPipeStages() {
     static_assert(K % bK == 0);
-    constexpr int cap = (Arch>= 900 ? 3 : Arch >= 800 ? 2 : 1);
+    // Ampere used to stop at 2. One 128x128x32 K-step is about as long as a
+    // memory round trip, so two stages leave the copy exposed. Three stages
+    // are what Hopper already uses; gated bf16 smem grows from 64 KB to 80 KB.
+    constexpr int cap = (Arch >= 800 ? 3 : 1);
     constexpr int stages = K / bK;
     return stages >= cap ? cap : stages;
   }
