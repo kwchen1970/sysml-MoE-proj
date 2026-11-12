@@ -791,8 +791,11 @@ void drive(const int argc, char** argv) {
   // to minimize instantiated templates
   constexpr int bN0 = sizeof(Element) == 2 ? 128 : 64; // 144 for gpt-oss
   constexpr int bN1 = bN0;
-  constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
-  arch >= 900 ? 64 : 32;
+  // bK=64 was about 9% faster than bK=32 on the standalone mainloop. With the
+  // gate tile kept in shared memory, one pipeline stage is what still fits
+  // two blocks per SM (64 KB). Two stages at bK=64 need the gate tile gone,
+  // and staging that tile through the output buffer was not numerically correct.
+  constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : 64;
   constexpr int bK1 = bK0;
   if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
     throw std::invalid_argument("H is invalid");
@@ -800,7 +803,7 @@ void drive(const int argc, char** argv) {
   if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
     throw std::invalid_argument("I is invalid");
   }
-  constexpr auto pS = arch >= 900 ? 3 : arch >= 800 ? 2 : 1; // Hopper 3
+  constexpr auto pS = arch >= 900 ? 3 : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128; // hopper, S >= 4096 -> bM = 256
   static_assert(bM >= 1);
   if (S < 1 || (S > bM && S % bM != 0)) {
