@@ -56,6 +56,18 @@ Dropping the partner whenever the long pole can fill the free CTAs (`exp/affinit
 
 Error stayed in the baseline band (about 0.04–0.12% at k=6). Occupancy stayed 2. The S=16384 and I=4096 single numbers are means of two runs; those pairs agreed to about 0.05 ms.
 
+`exp/affinity-exclusive` never keeps a second expert in the hot set. The partner is only filler for idle CTAs. Paired against single-expert, 32 iterations:
+
+| Shape | Single | Exclusive |
+|---|---:|---:|
+| anchor, repeat 1 | 3.931 | 3.918 |
+| anchor, repeat 2 | 3.935 | 3.904 |
+| S=16384 | 19.431 | 19.325 |
+| I=4096 | 8.841 | 8.856 |
+| E=64 | 4.400 | 4.423 |
+
+The anchor means are 3.933 ms and 3.911 ms. That is 0.02 ms, inside the run-to-run spread of this comparison. The other three shapes move by about 0.5% in either direction. Refusing to prefer the partner when the long pole is short does not add another gain. The single-expert rule is where this knob stopped helping.
+
 ## Pipeline and tile width
 
 | Branch | What changed | Anchor | blocks/SM |
@@ -70,7 +82,3 @@ Three stages at bN=128 lost the second block and got slower. Narrowing N so thre
 ## Dispatch
 
 `exp/dispatch-cta-share` moved one-GPU latency by under 1% and was 2–5% slower on four GPUs.
-
-## In flight
-
-`exp/affinity-exclusive` never puts a second expert in the hot set. A second expert is issued only to fill CTAs the long pole cannot occupy. The single-expert policy still keeps a partner whenever the long pole is short of a full wave, and L2 was still at 51% after the two-expert policy.
