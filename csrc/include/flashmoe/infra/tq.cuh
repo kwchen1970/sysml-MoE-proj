@@ -24,6 +24,14 @@ namespace flashmoe {
   };
 
 
+  // Doorbell index lives in the low 24 bits (stored as index + 1).
+  // A non-zero high byte is a wave length: one wake runs that many
+  // consecutive tasks from the same expert queue. High byte 0 means one task,
+  // which is the original doorbell.
+  constexpr uint kSignalIndexBits = 24;
+  constexpr uint kSignalIndexMask = (1u << kSignalIndexBits) - 1u;
+  constexpr uint kExpertWave = 4;
+
   struct __align__(8) TQSignal {
     uint signal; // one ahead
     uint interrupt;

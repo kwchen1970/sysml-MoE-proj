@@ -80,6 +80,28 @@ namespace flashmoe::scheduler
     }
   }
 
+  // One processor runs `span` consecutive tasks from a block queue.
+  // The ready-queue cursor advances once per processor, not once per tile.
+  template <int nQ = 0>
+  __device__ __forceinline__
+  void scheduleWave(const cuda::fast_mod_div<uint>& processors_v, const uint canSchedule,
+                    const uint span, const uint qIdx, uint& door, const uint gRQIdx,
+                    uint* __restrict__ const& rQ, TQSignal* __restrict__ const& pDB) {
+    uint issued = 0;
+    while (issued < canSchedule) {
+      const uint n = umin(span, canSchedule - issued);
+      const uint proc = rQ[circularIdx(gRQIdx + door, processors_v)];
+      ++door;
+      const uint index = DQ::next<DQType::block, nQ>(qIdx, issued);
+      TQSignal sig{0U, 0U};
+      sig.signal = (n << kSignalIndexBits) | ((index + 1u) & kSignalIndexMask);
+      auto* __restrict__ pdbAddr = reinterpret_cast<uint64_t*>(pDB + proc);
+      cuda::atomic_ref<uint64_t, cuda::thread_scope_device> pdb{*pdbAddr};
+      pdb.store(cuda::std::bit_cast<uint64_t>(sig), cuda::memory_order_release);
+      issued += n;
+    }
+  }
+
   template <
     int processor_state_size,
     int subscriberCount,
@@ -110,6 +132,7 @@ namespace flashmoe::scheduler
     WarpScan(wSt).InclusiveSum(lTt, queueSlot, taskTally);
     queueSlot -= lTt;
     auto prefixTaskSum = 0U;
+    uint issuedDoors = 0U;
     while (taskTally) {
       // Find processors if we are not currently aware of any
       while (!processorTally) {
@@ -146,12 +169,31 @@ namespace flashmoe::scheduler
           __syncwarp();
         }
       }
+      // One megakernel stays resident. When a single lane owns every ready tile
+      // and there are enough free processors to give each of them several tiles,
+      // wake each processor once for a run of one expert's tiles. The processor
+      // walks that run before it returns to the doorbell, so the expert weight
+      // stays hot and the OS block does not pay a round trip per 128x128 tile.
+      uint headTasks = 0;
+      if constexpr (sL > 0) {
+        #pragma unroll
+        for (uint j = 0; j < sL; ++j) {
+          headTasks += tqState[j].tasks;
+        }
+      }
+      // Wave only the block queues. A lane that still holds subscriber-queue
+      // tasks keeps the original one-doorbell-per-tile path.
+      const bool soleOwner = !isMedley && prefixTaskSum == 0 && taskTally >= kExpertWave &&
+        __any_sync(0xffffffff, queueSlot == 0 && lTt >= taskTally && headTasks == 0);
+      const uint wavePops = (taskTally + kExpertWave - 1) / kExpertWave;
+      const bool wave = soleOwner && wavePops <= processorTally;
       // schedule tasks
-      const auto tasks = cute::min(processorTally, taskTally);
+      const auto tasks = wave ? taskTally : cute::min(processorTally, taskTally);
       prefixTaskSum += tasks;
       scheduled += tasks;
-      processorTally -= tasks;
       taskTally -= tasks;
+      uint waveDoor = 0;
+      uint plainDoors = 0;
       // these will get scheduled now
       if (lTt > 0 && queueSlot < prefixTaskSum) {
         auto tasksToSchedule = umin(lTt, prefixTaskSum - queueSlot);
@@ -171,6 +213,7 @@ namespace flashmoe::scheduler
                 const auto cSetB = canSchedule / WORK_SET_SIZE;
                 schedule<DQType::stride, subscriberCount>(processors_v, cSetB, canSchedule, qIdx,
                                                           queueSlot, gRQIdx, rQ, pDB);
+                plainDoors += canSchedule;
               }
             }
           }
@@ -181,24 +224,35 @@ namespace flashmoe::scheduler
             const auto canSchedule = cute::min(tasksToSchedule, tqState[j].tasks);
             const auto qHead = (schedulerCount * (gTbO + (j - sL)) + threadIdx.x) * tilesN1 + tqState[j].tQTail;
             const auto qIdx = tQOffset + qHead;
+            const bool oneQueue = canSchedule == tasksToSchedule;
             tasksToSchedule -= canSchedule;
             tqState[j].tasks -= canSchedule;
             // checkpoint state in case of partial scheduling
             tqState[j].tQTail += canSchedule;
             const auto cSetB = canSchedule / WORK_SET_SIZE;
-            schedule<DQType::block>(processors_v, cSetB, canSchedule,
-                                    qIdx, queueSlot, gRQIdx, rQ, pDB);
+            if (wave && queueSlot == 0 && oneQueue) {
+              scheduleWave(processors_v, canSchedule, kExpertWave, qIdx, waveDoor, gRQIdx, rQ, pDB);
+            }
+            else {
+              schedule<DQType::block>(processors_v, cSetB, canSchedule,
+                                      qIdx, queueSlot, gRQIdx, rQ, pDB);
+              plainDoors += canSchedule;
+            }
           }
         }
       }
+      const uint doors = __reduce_add_sync(0xffffffff, waveDoor + plainDoors);
+      processorTally -= doors;
+      issuedDoors += doors;
     }
     // clear checkpoints
     #pragma unroll
     for (uint j = sL; j < tqState.size(); ++j) {
       tqState[j].tQTail = 0;
     }
-    // Advance global rQ index
-    gRQIdx = circularIdx((gRQIdx + prefixTaskSum), processors_v);
+    // A wave consumes one ready-queue slot per processor. prefixTaskSum
+    // still counts tiles, so the cursor follows issued doorbells.
+    gRQIdx = circularIdx((gRQIdx + issuedDoors), processors_v);
   }
 
   template <int processor_state_size, unsigned int schedulerCount>
