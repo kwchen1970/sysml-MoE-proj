@@ -8,6 +8,7 @@ using flashmoe::scheduler::chooseHotExperts;
 using flashmoe::scheduler::clampToSlots;
 using flashmoe::scheduler::isHotExpert;
 using flashmoe::scheduler::kNoExpert;
+using flashmoe::scheduler::narrowToLongPole;
 
 static int failures = 0;
 
@@ -125,12 +126,24 @@ static void testGlobalQueueIsWhole() {
   expect(take == 0, "a zero budget leaves the one-shot queue untouched");
 }
 
+static void testNarrowToLongPole() {
+  unsigned hist[4] = {40, 12, 3, 0};
+  unsigned hot0 = 0;
+  unsigned hot1 = 1;
+  narrowToLongPole(hist, hot0, hot1, 32);
+  expect(hot1 == kNoExpert, "a long pole that fills the CTAs drops its partner");
+  hot1 = 1;
+  narrowToLongPole(hist, hot0, hot1, 48);
+  expect(hot1 == 1, "a long pole that cannot fill the CTAs keeps its partner");
+}
+
 int main() {
   testClamp();
   testStickyAndLongPole();
   testAdmitAndCap();
   testAdmitColdWhenShort();
   testGlobalQueueIsWhole();
+  testNarrowToLongPole();
   if (failures) {
     std::printf("%d failure(s)\n", failures);
     return 1;

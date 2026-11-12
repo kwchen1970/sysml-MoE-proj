@@ -412,6 +412,8 @@ namespace flashmoe::scheduler
         unsigned hot0 = kNoExpert;
         unsigned hot1 = kNoExpert;
         chooseHotExperts(affHist, nLx, sticky0, sticky1, hot0, hot1);
+        const unsigned slotsNow = processorTally == 0 ? processors : processorTally;
+        narrowToLongPole(affHist, hot0, hot1, slotsNow);
         affChoice[0] = hot0;
         affChoice[1] = hot1;
       }
