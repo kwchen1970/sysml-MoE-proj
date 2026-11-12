@@ -789,7 +789,10 @@ void drive(const int argc, char** argv) {
     throw std::invalid_argument("k must be <= E");
   }
   // to minimize instantiated templates
-  constexpr int bN0 = sizeof(Element) == 2 ? 128 : 64; // 144 for gpt-oss
+  // A100 measurement: bN=128 with 3 stages needs ~80 KB dynamic shared memory
+  // and occupancy falls from 2 blocks/SM to 1. Latency rose 20-43%.
+  // bN=64 with 3 stages is ~52 KB, which fits 2 blocks/SM.
+  constexpr int bN0 = 64;
   constexpr int bN1 = bN0;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 900 ? 64 : 32;
@@ -800,7 +803,7 @@ void drive(const int argc, char** argv) {
   if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
     throw std::invalid_argument("I is invalid");
   }
-  constexpr auto pS = arch >= 900 ? 3 : arch >= 800 ? 2 : 1; // Hopper 3
+  constexpr auto pS = arch >= 800 ? 3 : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128; // hopper, S >= 4096 -> bM = 256
   static_assert(bM >= 1);
   if (S < 1 || (S > bM && S % bM != 0)) {
