@@ -789,7 +789,9 @@ void drive(const int argc, char** argv) {
     throw std::invalid_argument("k must be <= E");
   }
   // to minimize instantiated templates
-  constexpr int bN0 = sizeof(Element) == 2 ? 128 : 64; // 144 for gpt-oss
+  // Control for the 3-stage occupancy retest. Same 2-stage pipeline as
+  // baseline, but bN=64, so a latency change here is the narrower tile.
+  constexpr int bN0 = 64;
   constexpr int bN1 = bN0;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 900 ? 64 : 32;
