@@ -77,8 +77,11 @@ namespace flashmoe::moe
     using Element = Config::DType;
 
     constexpr int bM = bM0;
+    // The gated path stages its first projection through the output tile, so
+    // the kernel no longer reserves a second C tile. 32 KB is what 3 blocks
+    // need in order to fit in the 164 KB SM shared-memory budget.
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(sizeof(Element) * bK0 * pSK0 * (bM + bN0),
-    sizeof(Element) * bM * bN0) + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
+    sizeof(Element) * bM * bN0), MAX_ALIGNMENT);
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
       sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
@@ -162,7 +165,10 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  __launch_bounds__(Config::Threads::value, 1)
+  // minBlocksPerMultiprocessor is 3. The previous bound of 1 let the
+  // compiler keep 255 registers, which along with 64 KB of dynamic smem
+  // left 2 blocks and 8 warps on the SM. Tensor-pipe throughput was 38%.
+  __launch_bounds__(Config::Threads::value, 3)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
