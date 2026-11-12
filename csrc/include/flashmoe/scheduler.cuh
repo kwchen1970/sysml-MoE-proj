@@ -412,8 +412,11 @@ namespace flashmoe::scheduler
         unsigned hot0 = kNoExpert;
         unsigned hot1 = kNoExpert;
         chooseHotExperts(affHist, nLx, sticky0, sticky1, hot0, hot1);
-        const unsigned slotsNow = processorTally == 0 ? processors : processorTally;
-        narrowToLongPole(affHist, hot0, hot1, slotsNow);
+        // One expert at a time. The partner is admitted only through the cold
+        // budget, and only for CTAs the long pole cannot fill. Two-expert
+        // affinity left L2 at 51% of peak; keeping a partner in the hot set
+        // was still putting a second weight set into that cache.
+        hot1 = kNoExpert;
         affChoice[0] = hot0;
         affChoice[1] = hot1;
       }

@@ -1,22 +1,76 @@
 # MoE-layer campaign
 
-Measurements are BF16 gated MLP on Perlmutter A100s. Latency is the mean of the timed iterations inside one process. `blocks/SM` is `cudaOccupancyMaxActiveBlocksPerMultiprocessor` for the fused kernel.
+BF16 gated MLP, Perlmutter A100-SXM4-80GB (L2 is 40 MB). Latency is the mean of 32 timed iterations unless noted. `blocks/SM` comes from `cudaOccupancyMaxActiveBlocksPerMultiprocessor`. Anchor: S=4096, H=2048, I=1408, E=16, k=6.
 
-Anchor shape unless noted: S=4096, H=2048, I=1408, E=16, k=6. Useful work at that point is about 0.425 TFLOP. A100 BF16 peak is 312 TFLOP/s, so the arithmetic roof is about 1.36 ms. The measured forward is about 4.4 ms.
+Arithmetic roof at the anchor is about 1.36 ms. Measured baseline is about 4.45 ms.
 
-## Closed
+## Scheduler
 
-| Branch | Hypothesis | Result |
-|---|---|---|
-| `exp/l2-expert-affinity` | Issuing two hot experts, and anyone else only to fill idle CTAs, cuts weight reloads from a 40 MB L2. | One GPU: 4.412 to 4.083 ms (−7.5%) at the anchor, −5.4% at E=64, −2.8% at E=128, −5.9% at E=32 k=2 I=2048. Four GPUs: −3.1% at E=16, −0.4% at E=64. Occupancy stayed 2. Error stayed in the baseline band. No hang. |
-| `exp/deeper-k-pipeline` | A third K-stage hides the copy the way Hopper's 3-stage pipeline does. | Occupancy fell to 1 block/SM (108 blocks). Anchor 4.412 to 6.075 ms (+38%). Every other point was 20–43% slower. |
-| `exp/dispatch-cta-share` | Reserving 75% of CTAs for dispatch keeps processors idle. | One GPU moved by under 1%. Four GPUs were 2% and 5% slower. |
+Two-expert affinity (`exp/l2-expert-affinity`) then one-expert-when-it-fills (`exp/affinity-single-expert`).
+
+Anchor, one GPU, three repeats of the two-expert policy against baseline:
+
+| | repeat 1 | repeat 2 | repeat 3 | mean |
+|---|---:|---:|---:|---:|
+| baseline | 4.463 | 4.474 | 4.421 | 4.453 ms |
+| two-expert | 4.101 | 4.090 | 4.060 | 4.084 ms |
+
+That is −8.3%. The repeat spread is about 0.05 ms, and the gap is 0.37 ms.
+
+The same policy on other shapes, one GPU:
+
+| Shape | Baseline | Two-expert | Change |
+|---|---:|---:|---:|
+| S=1024 | 1.069 | 1.001 | −6.4% |
+| S=16384 | 21.563 | 19.723 | −8.5% |
+| I=1024 | 3.367 | 3.147 | −6.5% |
+| I=4096 | 10.324 | 9.051 | −12.3% |
+| E=64 | 4.765 | 4.465 | −6.3% |
+| k=2 | 1.463 | 1.348 | −7.8% |
+
+The saving grows with S, so it is paid per tile. It also grows as a fraction of runtime when I grows, which is when each expert's weights get larger than L2. One gated expert at I=1408 is about 17 MB. At I=4096 it is about 50 MB.
+
+Nsight Compute on one anchor forward, after pausing DCGM:
+
+| | Baseline | Two-expert |
+|---|---:|---:|
+| L2 throughput | 71.4% of peak | 51.1% of peak |
+| Tensor pipe | 32.5% of peak | 36.3% of peak |
+| DRAM throughput | ~717 GB/s | ~735 GB/s |
+| Registers / thread | 255 | 255 |
+| Dynamic shared / block | 65.5 KB | 65.5 KB |
+| Occupancy limit, registers | 2 blocks | 2 blocks |
+| Occupancy limit, shared | 2 blocks | 2 blocks |
+
+L2 was the busiest pipe. Affinity lowered it and raised the tensor pipe. DRAM on this 80 GB A100 peaks near 2 TB/s, so the kernel is not sitting on DRAM peak. Occupancy cannot rise past 2 blocks: registers and shared memory both stop there.
+
+Dropping the partner whenever the long pole can fill the free CTAs (`exp/affinity-single-expert`), one GPU, 32 iterations, paired with a fresh baseline and the two-expert binary:
+
+| Shape | Baseline | Two-expert | Single | Single vs baseline |
+|---|---:|---:|---:|---:|
+| anchor | 4.488 | 4.088 | 3.924 | −12.6% |
+| S=16384 | 21.561 | 19.801 | 19.346 | −10.3% |
+| I=4096 | 10.371 | 9.054 | 8.865 | −14.5% |
+| E=64 | 4.802 | 4.643 | 4.401 | −8.4% |
+| 4 GPU, I=4096 | 10.484 | 9.297 | 9.125 | −13.0% |
+
+Error stayed in the baseline band (about 0.04–0.12% at k=6). Occupancy stayed 2. The S=16384 and I=4096 single numbers are means of two runs; those pairs agreed to about 0.05 ms.
+
+## Pipeline and tile width
+
+| Branch | What changed | Anchor | blocks/SM |
+|---|---|---:|---:|
+| baseline | bN=128, 2 stages | 4.488 ms | 2 |
+| `exp/deeper-k-pipeline` | bN=128, 3 stages | 6.075 ms | 1 |
+| `exp/tile-n64` | bN=64, 2 stages | 7.670 ms | 2 |
+| `exp/pipeline-fit-occupancy` | bN=64, 3 stages | 7.682 ms | 2 |
+
+Three stages at bN=128 lost the second block and got slower. Narrowing N so three stages fit keeps 2 blocks, and the third stage matches the two-stage narrow tile. The extra stage is not the effect. The narrow tile is about 70% slower at the anchor, at S=16384, at I=4096, and at E=64. Registers still cap occupancy at 2, so the narrow tile did not buy another block.
+
+## Dispatch
+
+`exp/dispatch-cta-share` moved one-GPU latency by under 1% and was 2–5% slower on four GPUs.
 
 ## In flight
 
-| Branch | Hypothesis | What would support it |
-|---|---|---|
-| (no code) scale sweep of baseline vs affinity | The 7% is per-tile weight traffic, so it grows with I and holds its fraction as S grows. A fixed saving that shrinks as a fraction of a longer S is a startup effect. | Anchor repeated 3 times at 32 iterations. Also S=1024 and 16384, I=1024 and 4096, k=2, and the same anchor on 4 GPUs. |
-| (no code) Nsight Compute on one forward | The affinity gain is fewer DRAM bytes, or it is something else and the next edit should follow the other limiter. | DRAM throughput and bytes, L2 hit rate, SM and tensor throughput, achieved occupancy. |
-| `exp/pipeline-fit-occupancy` | The third stage lost only because occupancy fell. bN=64 keeps 3 stages near 52 KB, so 2 blocks/SM survive and the extra stage can hide the copy. | `blocks/SM` stays 2 and latency drops below the bN=128 2-stage baseline. If occupancy stays 2 and latency does not drop, the copy was not the limiter. |
-| `exp/affinity-single-expert` | Two experts are ~34 MB and leave little L2 for activations. When the longer expert alone can fill every free CTA, drop the partner. | Anchor latency below the two-expert 4.083 ms, occupancy still 2, error still in band. A slower result means the partner's tiles were on the critical path. Runs after the scale sweep confirms the 7% is stable. |
+`exp/affinity-exclusive` never puts a second expert in the hot set. A second expert is issued only to fill CTAs the long pole cannot occupy. The single-expert policy still keeps a partner whenever the long pole is short of a full wave, and L2 was still at 51% after the two-expert policy.
