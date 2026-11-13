@@ -447,6 +447,69 @@ namespace flashmoe::tile
         BLAS().execute(sA, sB, accumulator, transformOp, transformOp);
       });
     }
+
+    // Gate and up share each A stage. Both accumulators stay live, so bN has to
+    // stay at or below 64: two 128x64 fp32 tiles fit in the register budget of
+    // one 128x128 tile. A 128-wide pair spills and drops the SM to one block.
+    template <typename Accumulator, typename TileCoord>
+      requires(cute::rank_v<TileCoord> == 3 && cublasdx::is_blas_execution_v<BLAS> && bN <= 64)
+    __device__ __forceinline__
+    void gated(void* __restrict__ const& workspace,
+               const Element* __restrict__ const& a,
+               const Element* __restrict__ const& b,
+               const Element* __restrict__ const& bV,
+               Accumulator& accGate, Accumulator& accUp,
+               const int& M, const int& N, const int& K, const TileCoord& tileCoord) const {
+      using TransformType = cuda::std::conditional_t<cuda::std::is_same_v<TranslatedElement, Element>,
+                                                     cublasdx::identity, Converter<TranslatedElement, Element>>;
+      constexpr TransformType transformOp{};
+      accGate.clear();
+      accUp.clear();
+      const int tilesK = K / bK;
+      const auto gA = tile::get<bM, bK, ar>(a, M, K, cute::select<0, 2>(tileCoord));
+      const auto gB = tile::get<bK, bN, br>(b, K, N, cute::select<2, 1>(tileCoord));
+      const auto gBv = tile::get<bK, bN, br>(bV, K, N, cute::select<2, 1>(tileCoord));
+      constexpr auto sASS = cublasdx::cosize(BLAS::suggest_layout_smem_a());
+      constexpr auto sBSS = cublasdx::cosize(BLAS::suggest_layout_smem_b());
+      auto* __restrict__ sAP = static_cast<Element*>(workspace);
+      auto* __restrict__ sBP = sAP + (sASS * pipeStages);
+      auto* __restrict__ sBvP = sBP + (sBSS * pipeStages);
+      auto sA = cublasdx::make_tensor(sAP, BLAS::suggest_layout_smem_a());
+      auto sB = cublasdx::make_tensor(sBP, BLAS::suggest_layout_smem_b());
+      auto sBv = cublasdx::make_tensor(sBvP, BLAS::suggest_layout_smem_b());
+      cute::for_each(cute::make_int_sequence<pipeStages>{}, [&](auto stage) {
+        update_buffer<stage, sASS>(sA, sAP);
+        update_buffer<stage, sBSS>(sB, sBP);
+        update_buffer<stage, sBSS>(sBv, sBvP);
+        cublasdx::copy<BLAS, aAlignment>(gA(cute::_, cute::_, stage), sA);
+        cublasdx::copy<BLAS, bAlignment>(gB(cute::_, cute::_, stage), sB);
+        cublasdx::copy<BLAS, bAlignment>(gBv(cute::_, cute::_, stage), sBv);
+        cpFence();
+      });
+      for (int kStage = pipeStages; kStage < tilesK; ++kStage) {
+        const int ps = kStage % pipeStages;
+        update_buffer<sASS>(sA, sAP, ps);
+        update_buffer<sBSS>(sB, sBP, ps);
+        update_buffer<sBSS>(sBv, sBvP, ps);
+        cpWait<pipeStages - 1>();
+        BLAS().execute(sA, sB, accGate, transformOp, transformOp);
+        BLAS().execute(sA, sBv, accUp, transformOp, transformOp);
+        __syncthreads();
+        cublasdx::copy<BLAS, aAlignment>(gA(cute::_, cute::_, kStage), sA);
+        cublasdx::copy<BLAS, bAlignment>(gB(cute::_, cute::_, kStage), sB);
+        cublasdx::copy<BLAS, bAlignment>(gBv(cute::_, cute::_, kStage), sBv);
+        cpFence();
+      }
+      cute::for_each(cute::make_int_sequence<pipeStages>{}, [&](auto stage) {
+        const int ps = (tilesK + stage) % pipeStages;
+        update_buffer<sASS>(sA, sAP, ps);
+        update_buffer<sBSS>(sB, sBP, ps);
+        update_buffer<sBSS>(sBv, sBvP, ps);
+        cpWait<(pipeStages - 1) - stage>();
+        BLAS().execute(sA, sB, accGate, transformOp, transformOp);
+        BLAS().execute(sA, sBv, accUp, transformOp, transformOp);
+      });
+    }
   };
 }
 #endif //FLASHMOE_TILE_CUH

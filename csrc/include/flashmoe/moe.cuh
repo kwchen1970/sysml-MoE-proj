@@ -213,7 +213,11 @@ namespace flashmoe::moe
       ctx.gTqHeads,
       ctx.tQ,
       ctx.pTq,
-      ctx.tileSync
+      ctx.tileSync,
+      ctx.pairSync,
+      ctx.gateAct,
+      ctx.upAct,
+      ctx.GEMM0Staging
     };
     using AccumType = Config::AccumType;
     using GEMM0Act = ActivationType<AccumType, a>::AT;

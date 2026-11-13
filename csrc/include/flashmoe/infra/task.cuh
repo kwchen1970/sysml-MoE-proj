@@ -8,6 +8,9 @@
 #include <cuda/std/array>
 namespace flashmoe {
     constexpr int GEMMs = 2; // within
+    // Gate and up are separate tasks. The up task keeps the same tile index
+    // with this bit set, so both products can occupy different CTAs.
+    constexpr uint kUpProductBit = 1u << 31;
     enum class TaskType : uint8_t {
         GEMM0,
         GEMM1,

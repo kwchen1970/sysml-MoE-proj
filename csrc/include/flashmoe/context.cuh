@@ -20,6 +20,9 @@ namespace flashmoe {
     Task *const pTq = nullptr; //[secondaryTQLength]
     // [world, num_local_experts, roundEC, I] ~= [S, I]
     cuda::std::byte *const GEMM0Staging = nullptr;
+    cuda::std::byte *const gateAct = nullptr;
+    cuda::std::byte *const upAct = nullptr;
+    uint *const pairSync = nullptr;
     BitSet *const consumerCombineBitMap = nullptr; // nSI<subscriberCount>(tiles(S) * tiles(H))
     uint8_t *const producerCombineBitMap = nullptr; // [world, nLx, ecTilesM, N1] ~= tiles(S) * tiles(H)
     PEL *const pel = nullptr; // [E]

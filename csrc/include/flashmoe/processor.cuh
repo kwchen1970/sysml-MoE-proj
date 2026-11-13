@@ -69,6 +69,92 @@ namespace flashmoe::processor
     cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
   }
 
+  // One CTA computes either the gate or the up product. The CTA that arrives
+  // second multiplies them into the GEMM0 staging buffer.
+  template <
+    typename TileGEMM,
+    typename Activation,
+    typename Element,
+    typename ElementC
+  >
+  __device__ void fGET_split(cuda::std::byte* __restrict__ workspace,
+            const Element* __restrict__ a,
+            const Element* __restrict__ b,
+            const Element* __restrict__ bV,
+            ElementC* __restrict__ c,
+            const ElementC* __restrict__ bias,
+            const ElementC* __restrict__ biasV,
+            const typename TileGEMM::AccumType& swishAlpha,
+            const typename TileGEMM::AccumType& swishBeta,
+            const int M, const int N, const int K, const uint tileIdx, const uint syncIdx,
+            const uint tilesN0, cuda::std::byte* gateAct, cuda::std::byte* upAct,
+            cuda::std::byte* staging, uint* pairSync, uint& pairPrev) {
+    using BLAS = TileGEMM::BLAS;
+    using BM = cute::Int<cublasdx::size_of<BLAS>::m>;
+    using BN = cute::Int<cublasdx::size_of<BLAS>::n>;
+    const uint idx = tileIdx & ~kUpProductBit;
+    const bool up = tileIdx & kUpProductBit;
+    const auto tileCoord = tile::idx2Coord(M / BM{}, N / BN{}, static_cast<int>(idx));
+    constexpr TileGEMM tileMainloop{};
+    auto accumulator = BLAS::suggest_accumulator();
+    tileMainloop(workspace, a, up ? bV : b, accumulator, M, N, K, tileCoord);
+    __syncthreads();
+    constexpr Activation act{};
+    constexpr Converter<typename TileGEMM::AccumType, ElementC> loadConv{};
+    constexpr Converter<ElementC, typename TileGEMM::AccumType> storeConv{};
+    const auto c_frag = accumulator.get_results();
+    constexpr int accum_size = cublasdx::size(c_frag);
+    const uint col = idx % tilesN0;
+    const uint pair = syncIdx * tilesN0 + col;
+    const uint lane = threadIdx.x * static_cast<uint>(accum_size);
+    const uint tileElems = static_cast<uint>(BM::value) * static_cast<uint>(BN::value);
+    auto* gateSlots = reinterpret_cast<ElementC*>(gateAct) + static_cast<size_t>(pair) * tileElems + lane;
+    auto* upSlots = reinterpret_cast<float*>(upAct) + static_cast<size_t>(pair) * tileElems + lane;
+    if (!up) {
+      const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
+      auto d_frag = cublasdx::make_fragment_like<ElementC>(c_frag);
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accumulator);
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
+        d_frag(i) = storeConv(swishAlpha * act(g));
+        gateSlots[i] = d_frag(i);
+      });
+    } else {
+      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
+      auto b_frag = cublasdx::make_fragment_like<ElementC>(c_frag);
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, b_frag, accumulator);
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        upSlots[i] = c_frag(i) + loadConv(b_frag(i));
+      });
+    }
+    __threadfence();
+    __syncthreads();
+    if (!threadIdx.x) {
+      cuda::atomic_ref<uint, cuda::thread_scope_device> ctr{pairSync[pair]};
+      pairPrev = ctr.fetch_add(1u, cuda::memory_order_acq_rel);
+    }
+    __syncthreads();
+    if (pairPrev == 0) {
+      return;
+    }
+    auto out = cublasdx::make_fragment_like<ElementC>(c_frag);
+    cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+      const float gate = loadConv(gateSlots[i]);
+      const float upv = upSlots[i];
+      out(i) = storeConv(gate * upv);
+    });
+    auto sC = cublasdx::make_tensor(reinterpret_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
+    __syncthreads();
+    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(out, sC, accumulator);
+    __syncthreads();
+    auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
+    cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
+    __threadfence();
+    if (!threadIdx.x) {
+      pairSync[pair] = 0;
+    }
+  }
+
   template <
     typename TileGEMM,
     typename Activation,
@@ -153,6 +239,10 @@ namespace flashmoe::processor
     Task* const tQ = nullptr;
     Task* const ptQ = nullptr;
     unsigned int* const tQS = nullptr;
+    unsigned int* const pairSync = nullptr;
+    cuda::std::byte* const gateAct = nullptr;
+    cuda::std::byte* const upAct = nullptr;
+    cuda::std::byte* const gemm0Staging = nullptr;
 
     ProcessorArgs() = default;
     __device__ __forceinline__
@@ -161,8 +251,13 @@ namespace flashmoe::processor
                   unsigned int* const& tqh,
                   Task* const& tq,
                   Task* const& ptq,
-                  unsigned int* const& tqs) :
-      sQ(sq), pDB(reinterpret_cast<uint64_t*>(pdb)), tQH(tqh), tQ(tq), ptQ(ptq), tQS(tqs) {
+                  unsigned int* const& tqs,
+                  unsigned int* const& pairs = nullptr,
+                  cuda::std::byte* const& gate = nullptr,
+                  cuda::std::byte* const& up = nullptr,
+                  cuda::std::byte* const& staging = nullptr) :
+      sQ(sq), pDB(reinterpret_cast<uint64_t*>(pdb)), tQH(tqh), tQ(tq), ptQ(ptq), tQS(tqs),
+      pairSync(pairs), gateAct(gate), upAct(up), gemm0Staging(staging) {
     }
   };
 
@@ -250,6 +345,7 @@ namespace flashmoe::processor
     __shared__ Task currentTask;
     __shared__ uint globalInterrupt;
     __shared__ uint enqueue;
+    __shared__ uint pairPrev;
     TQSignal tqs{0U, 0U};
     static_assert(sizeof(TQSignal) == sizeof(uint64_t) && alignof(TQSignal) == alignof(uint64_t));
     static_assert(sizeof(SignalPayload<PacketStage::last>) == sizeof(uint64_t) &&
@@ -257,6 +353,7 @@ namespace flashmoe::processor
     if (!threadIdx.x) {
       globalInterrupt = 0U;
       enqueue = 0U;
+      pairPrev = 0U;
     }
     __syncthreads();
     using SQT = cuda::std::underlying_type_t<flashmoe::ReadySignal>;
@@ -316,22 +413,30 @@ namespace flashmoe::processor
           else {
             const auto* bPv = expertUpVWeights + expertWeightSize * task.localExpertIdx();
             const auto* __restrict__ biasPv = biasUpV + static_cast<size_t>(I) * task.localExpertIdx();
-            fGET_gated<TileGEMM0, Activation>(workspace, aP, bP, bPv, cP, biasP, biasPv,
-              swishAlpha, swishBeta, task.M(), I, H, task.tileIdx);
+            if (!threadIdx.x) {
+              pairPrev = 0;
+            }
+            __syncthreads();
+            fGET_split<TileGEMM0, Activation>(workspace, aP, bP, bPv, cP, biasP, biasPv,
+              swishAlpha, swishBeta, task.M(), I, H, task.tileIdx, task.syncIdx, tilesN0,
+              pA.gateAct, pA.upAct, pA.gemm0Staging, pA.pairSync, pairPrev);
           }
           __syncthreads();
-          if (!threadIdx.x) {
+          const bool rowOwner = mt == MLPMatmulType::vanilla || pairPrev == 1;
+          if (rowOwner && !threadIdx.x) {
             cuda::atomic_ref<uint, cuda::thread_scope_device> tileSync{*(pA.tQS + task.syncIdx)};
             const auto isLast = tileSync.fetch_add(1, cuda::memory_order_acq_rel) + 1 == tilesN0;
             enqueue = isLast;
             if (isLast && (topo == Topology::NVLINK_ONLY || !task.isPeerRemote())) {
-              // clear the counter as it would no longer be used in this epoch
               tileSync.store(0, cuda::memory_order_relaxed);
             }
           }
+          else if (!threadIdx.x) {
+            enqueue = 0;
+          }
           __syncthreads();
           if (enqueue) {
-            const auto offset = tilesN1 * (task.tileIdx / tilesN0);
+            const auto offset = tilesN1 * ((task.tileIdx & ~kUpProductBit) / tilesN0);
             auto* __restrict__ tQ = pA.ptQ + (task.syncIdx * tilesN1);
             if (topo == Topology::MIXED && task.isPeerRemote()) {
               notifyNext<PeerConnectivity::remote, threads>(workspace, task, tQ, tilesN1, flagColStride,

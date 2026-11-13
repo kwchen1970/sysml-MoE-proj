@@ -89,9 +89,10 @@ namespace flashmoe {
   constexpr auto subscriberTQLength(const int &world, const uint &numLocalExperts, const uint &ecTilesM,
                                     const uint &E, const uint &tilesN0, const uint &tilesN1,
                                     const uint &subscriberCount) {
+    // Two GEMM0 tasks per tile: gate and up run on separate CTAs.
     const auto dispatchTaskQL = cute::ceil_div(world * numLocalExperts, subscriberCount / subscriberWarpSize) *
-                                (cute::ceil_div(ecTilesM * tilesN0, subscriberWarpSize) + cute::ceil_div(
-                                   tilesN0, subscriberWarpSize));
+                                (cute::ceil_div(ecTilesM * tilesN0 * 2, subscriberWarpSize) + cute::ceil_div(
+                                   tilesN0 * 2, subscriberWarpSize));
     const auto combineTaskQL = (cute::ceil_div(ecTilesM * E, subscriberCount) * tilesN1) +
                                cute::ceil_div(ecTilesM * E * tilesN1, subscriberCount);
     return static_cast<size_t>(dispatchTaskQL + combineTaskQL) * subscriberCount;
@@ -265,7 +266,7 @@ namespace flashmoe {
     if (tQLength + secondaryTQL >= cuda::std::numeric_limits<uint>::max()) {
       throw std::runtime_error("Task Queue length should be < UINT32_MAX. Not an error: need to migrate to uint64");
     }
-    const size_t gRQIdxMax = (args.numLocalExperts * args.epWorld * ecTilesM * (tilesN0 + tilesN1)) +
+    const size_t gRQIdxMax = (args.numLocalExperts * args.epWorld * ecTilesM * ((tilesN0 * 2) + tilesN1)) +
                              (cute::ceil_div(roundEC, args.bM) * tilesN1) + (cute::ceil_div(
                                processors, scheduler::SCHEDULER_COUNT));
     if (gRQIdxMax >= cuda::std::numeric_limits<uint>::max()) {
@@ -279,6 +280,14 @@ namespace flashmoe {
     const size_t stagingLength = static_cast<size_t>(args.epWorld * args.numLocalExperts * roundEC) * args.
                                  ffnIntermediateSize;
     CHECK_CUDA(cudaMallocAsync(&GEMM0Staging, stagingLength * args.elementBytes, stream));
+    cuda::std::byte *gateAct = nullptr;
+    cuda::std::byte *upAct = nullptr;
+    CHECK_CUDA(cudaMallocAsync(&gateAct, stagingLength * args.elementBytes, stream));
+    CHECK_CUDA(cudaMallocAsync(&upAct, stagingLength * sizeof(float), stream));
+    uint *pairSync = nullptr;
+    const size_t pairCount = static_cast<size_t>(args.epWorld) * args.numLocalExperts * ecTilesM * tilesN0;
+    CHECK_CUDA(cudaMallocAsync(&pairSync, sizeof(uint) * pairCount, stream));
+    CHECK_CUDA(cudaMemsetAsync(pairSync, 0, sizeof(uint) * pairCount, stream));
 
     BitSet *consumerBitMap = nullptr;
     const auto cbmLength = nSI(args.numExperts * ecTilesM * tilesN1, subscriberCount);
@@ -343,6 +352,9 @@ namespace flashmoe {
       .tQ = tQ,
       .pTq = pTq,
       .GEMM0Staging = GEMM0Staging,
+      .gateAct = gateAct,
+      .upAct = upAct,
+      .pairSync = pairSync,
       .consumerCombineBitMap = consumerBitMap,
       .producerCombineBitMap = producerBitMap,
       .pel = pel,
@@ -455,6 +467,9 @@ namespace flashmoe {
     CHECK_CUDA(cudaFreeAsync(ctx.tQ, stream));
     CHECK_CUDA(cudaFreeAsync(ctx.stateNumbers, stream));
     CHECK_CUDA(cudaFreeAsync(ctx.GEMM0Staging, stream));
+    CHECK_CUDA(cudaFreeAsync(ctx.gateAct, stream));
+    CHECK_CUDA(cudaFreeAsync(ctx.upAct, stream));
+    CHECK_CUDA(cudaFreeAsync(ctx.pairSync, stream));
     CHECK_CUDA(cudaFreeAsync(ctx.pel, stream));
     CHECK_CUDA(cudaFreeAsync(ctx.pli, stream));
     CHECK_CUDA(cudaFreeAsync(ctx.eli, stream));

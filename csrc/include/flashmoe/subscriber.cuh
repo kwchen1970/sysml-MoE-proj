@@ -135,7 +135,7 @@ namespace flashmoe::subscriber
       const auto fS = wT / WARP_SIZE + (laneId < wT % WARP_SIZE);
       const auto rT = args.tilesN0 % WARP_SIZE;
       const auto lS = args.tilesN0 / WARP_SIZE + (rT > 0 ? laneId < rT : 0);
-      const auto tSlice = fS + (routedTokens % bM == 0 ? 0 : lS);
+      const auto span = fS + (routedTokens % bM == 0 ? 0u : lS);
 
       for (int i = 0; i < fS; ++i) {
         const auto tileIdx = laneId + i * WARP_SIZE;
@@ -144,6 +144,9 @@ namespace flashmoe::subscriber
         ingredients.tileSize = bM;
         args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, i)] = Task{
           ingredients, packet, taskResults, rcData, flags + rowIdx, syncIdx, tileIdx
+        };
+        args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, i + span)] = Task{
+          ingredients, packet, taskResults, rcData, flags + rowIdx, syncIdx, tileIdx | kUpProductBit
         };
       }
 
@@ -156,13 +159,16 @@ namespace flashmoe::subscriber
           args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, fS + j)] = Task{
             ingredients, packet, taskResults, rcData, flags + fTilesM, syncIdx, tileIdx
           };
+          args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, fS + j + span)] = Task{
+            ingredients, packet, taskResults, rcData, flags + fTilesM, syncIdx, tileIdx | kUpProductBit
+          };
         }
       }
 
-      if (tSlice) {
-        lTQHead += tSlice;
+      if (span) {
+        lTQHead += span * 2;
         cuda::atomic_ref<unsigned int, cuda::thread_scope_block> tqh{*args.tQHead};
-        cuda::std::ignore = tqh.fetch_add(tSlice, cuda::memory_order_release);
+        cuda::std::ignore = tqh.fetch_add(span * 2, cuda::memory_order_release);
       }
     }
   };
@@ -210,7 +216,7 @@ namespace flashmoe::subscriber
   __device__ __forceinline__
   void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0) {
     if (!atomicTAS<cuda::thread_scope_block>(args.status + peer)) {
-      const auto superfluous = (args.tilesN0 + args.tilesN1) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
+      const auto superfluous = ((args.tilesN0 * 2) + args.tilesN1) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
       atomicSub_block(args.taskCount, superfluous);
     }
   }
