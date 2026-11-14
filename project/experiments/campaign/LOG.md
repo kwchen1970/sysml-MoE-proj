@@ -114,3 +114,20 @@ Interleaved A/B on Perlmutter A100-SXM4-40GB (job 61292465): sole-owner waves we
 ## Next: Ampere gated bK=64 / pS=1
 
 Same AB smem footprint as bK=32/pS=2, fewer K trips. Pair against the single-expert affinity binary with the existing A/B harness.
+
+## Ampere gated bK=64 / pS=1 (this PR)
+
+Hardware: Perlmutter A100-SXM4-40GB. Harness: interleaved A/B, ROUNDS=3, WARMUP=2, RUNS=16.
+Baseline: single-expert affinity (`exp/scheduler-throughput`, bK=32, pS=2).
+Candidate: same scheduler + Ampere gated `bK=64`, `pS=1` (job 61293689).
+
+| Shape | SCHED mean | BK64 mean | Δ |
+|---|---:|---:|---:|
+| **anchor S=4096 I=1408 E=16 k=6** | **4.467** | **3.813** | **−14.6%** |
+| S=4096 I=2048 E=32 k=2 | 1.922 | 1.854 | −3.5% |
+| S=4096 I=4096 E=32 k=2 | 3.244 | 3.088 | −4.8% |
+| S=4096 I=8192 E=32 k=2 | 5.982 | 5.831 | −2.5% |
+| S=8192 I=2048 E=32 k=2 | 3.571 | 3.606 | +1.0% |
+| S=16384 I=2048 E=32 k=2 | 7.048 | 7.096 | +0.7% |
+
+Anchor BK64 rounds were 3.812 / 3.813 / 3.815 ms (spread <0.01 ms). Occupancy stayed 2 blocks/SM. Error stayed in band (often lower). AB smem footprint matches bK=32/pS=2; the win is fewer K-loop trips on the fused tile.
