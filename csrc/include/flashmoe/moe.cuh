@@ -71,7 +71,6 @@ namespace flashmoe::moe
     constexpr int bK1 = cute::get<2>(typename Config::G1TS{});
     constexpr int pSK1 = cute::get<3>(typename Config::G1TS{});
     constexpr int threads = Config::Threads::value;
-    constexpr auto mt = Config::MT::value;
     static_assert(bM0 == bM1);
 
     using Element = Config::DType;
