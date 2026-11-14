@@ -191,8 +191,8 @@ namespace flashmoe::scheduler
         // span = clamp(ceil(tasks / processors), 1, kExpertWave).
         const uint tileCap = processorTally * kExpertWave;
         const uint tasks = cute::min(tileCap, taskTally);
-        const uint span = cute::min(kExpertWave,
-          cute::max(1u, (tasks + processorTally - 1u) / processorTally));
+        const uint spanRaw = (tasks + processorTally - 1u) / processorTally;
+        const uint span = umin(kExpertWave, spanRaw < 1u ? 1u : spanRaw);
         // Lane tile share from the original InclusiveSum, clipped to this round.
         auto tasksToSchedule = (lTt > 0 && queueSlot < prefixTaskSum + tasks)
           ? umin(lTt, prefixTaskSum + tasks - queueSlot)
