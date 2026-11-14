@@ -106,3 +106,11 @@ Job 61292465 on Perlmutter A100-SXM4-40GB, interleaved A/B, ROUNDS=3 RUNS=16.
 Sole-owner waves with the processor always in the span loop were **slower** than single-expert affinity on most shapes (about +4% at the anchor, up to +12% at S=8192). Multi-lane packing hung and was abandoned.
 
 Follow-up: keep the doorbell span encoding, but restore the original one-tile processor path when the high byte is zero so the common case pays no extra barriers. Re-measure.
+
+## Expert wave under affinity — closed (no win)
+
+Interleaved A/B on Perlmutter A100-SXM4-40GB (job 61292465): sole-owner waves were about +4% at the anchor and up to +12% on longer S when the processor always paid the span-loop barriers. Multi-lane packing hung (timeouts). Reverted. The useful residue is the survey: waves need a different binding than today’s per-lane global queues.
+
+## Next: Ampere gated bK=64 / pS=1
+
+Same AB smem footprint as bK=32/pS=2, fewer K trips. Pair against the single-expert affinity binary with the existing A/B harness.

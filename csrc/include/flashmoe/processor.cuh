@@ -250,7 +250,6 @@ namespace flashmoe::processor
     __shared__ Task currentTask;
     __shared__ uint globalInterrupt;
     __shared__ uint enqueue;
-    __shared__ uint waveSpan;
     TQSignal tqs{0U, 0U};
     static_assert(sizeof(TQSignal) == sizeof(uint64_t) && alignof(TQSignal) == alignof(uint64_t));
     static_assert(sizeof(SignalPayload<PacketStage::last>) == sizeof(uint64_t) &&
@@ -258,7 +257,6 @@ namespace flashmoe::processor
     if (!threadIdx.x) {
       globalInterrupt = 0U;
       enqueue = 0U;
-      waveSpan = 1U;
     }
     __syncthreads();
     using SQT = cuda::std::underlying_type_t<flashmoe::ReadySignal>;
@@ -295,37 +293,13 @@ namespace flashmoe::processor
         // broadcast new payload from thread 0 to other threads in the warp
         payload = __shfl_sync(0xffffffff, payload, 0);
         tqs = cuda::std::bit_cast<TQSignal>(payload);
-        // Derive span from the broadcast payload so every lane agrees before
-        // touching shared waveSpan (thread 0 alone writing it races the read).
-        const uint hi = tqs.signal >> kSignalIndexBits;
-        const uint spanLocal = tqs.interrupt != 0 || hi == 0 ? 1u : hi;
-        if (threadIdx.x == 0) {
-          waveSpan = spanLocal;
-        }
-        // One-tile doorbells keep the original load path (no extra barriers).
-        if (spanLocal == 1u) {
-          const auto* __restrict__ gtQ = pA.tQ + tqs.decodeSig();
-          if (!tqs.interrupt && threadIdx.x < taskWidth) {
-            reinterpret_cast<uint4*>(&currentTask)[threadIdx.x] = reinterpret_cast<const uint4*>(gtQ)[threadIdx.x];
-          }
+        const auto* __restrict__ gtQ = pA.tQ + tqs.decodeSig();
+        if (!tqs.interrupt && threadIdx.x < taskWidth) {
+          reinterpret_cast<uint4*>(&currentTask)[threadIdx.x] = reinterpret_cast<const uint4*>(gtQ)[threadIdx.x];
         }
       }
       __syncthreads();
       tqs.interrupt = globalInterrupt;
-      const uint span = waveSpan;
-      for (uint wave = 0; wave < span && !tqs.interrupt; ++wave) {
-        if (span > 1u) {
-          if (threadIdx.x / WARP_SIZE == 0 && threadIdx.x < taskWidth) {
-            const uint base = (tqs.signal & kSignalIndexMask) - 1u;
-            const auto* __restrict__ gtQ = pA.tQ + base + wave;
-            reinterpret_cast<uint4*>(&currentTask)[threadIdx.x] = reinterpret_cast<const uint4*>(gtQ)[threadIdx.x];
-          }
-          __syncthreads();
-          if (!threadIdx.x) {
-            enqueue = 0U;
-          }
-          __syncthreads();
-        }
       if (!tqs.interrupt) {
         FLASHMOE_TRACE_STATE(flashmoe::project_trace::task,
           static_cast<unsigned>(currentTask.getTaskType()), currentTask.tileIdx);
@@ -454,7 +428,6 @@ namespace flashmoe::processor
         __syncthreads(); // trace boundary includes completion by all task threads
         FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
 #endif
-      }
       }
     }
     FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
