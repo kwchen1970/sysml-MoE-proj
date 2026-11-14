@@ -177,30 +177,41 @@ namespace flashmoe::scheduler
           headTasks += tqState[j].tasks;
         }
       }
-      // Affinity (isMedley) used to disable waves. When this pass holds only
-      // block-queue tiles, every lane can pack consecutive same-expert tiles
-      // onto one doorbell. Subscriber work keeps the 1:1 path.
+      // Affinity (isMedley) used to disable waves. Wave only when this pass is
+      // block-queue-only AND there are more ready tiles than free processors.
+      // Packing when tiles <= processors would serialize work onto fewer CTAs
+      // and lose parallelism; the win is covering a backlog in one doorbell round
+      // while still waking every free processor.
       const uint headTotal = __reduce_add_sync(0xffffffff, headTasks);
-      const bool allowWave = headTotal == 0 && taskTally >= kExpertWave;
+      const bool allowWave = headTotal == 0 && taskTally > processorTally;
       uint doors = 0;
       if (allowWave) {
-        // Budget processors by doorbells: each door covers up to kExpertWave
-        // tiles from one lane. Prefix-clamp so fragmentation cannot oversubscribe.
-        const uint desiredDoors = lTt ? (lTt + kExpertWave - 1u) / kExpertWave : 0u;
+        // Cover a backlog without dropping concurrency: wake every free
+        // processor, each running `span` tiles where
+        // span = clamp(ceil(tasks / processors), 1, kExpertWave).
+        const uint tileCap = processorTally * kExpertWave;
+        const uint tasks = cute::min(tileCap, taskTally);
+        const uint span = cute::min(kExpertWave,
+          cute::max(1u, (tasks + processorTally - 1u) / processorTally));
+        // Lane tile share from the original InclusiveSum, clipped to this round.
+        auto tasksToSchedule = (lTt > 0 && queueSlot < prefixTaskSum + tasks)
+          ? umin(lTt, prefixTaskSum + tasks - queueSlot)
+          : 0u;
+        const uint laneDoorsWanted = tasksToSchedule
+          ? (tasksToSchedule + span - 1u) / span
+          : 0u;
         uint doorSlot = 0;
-        uint desiredTotal = 0;
+        uint doorsWantedTotal = 0;
         __syncwarp();
-        WarpScan(wSt).InclusiveSum(desiredDoors, doorSlot, desiredTotal);
-        doorSlot -= desiredDoors;
+        WarpScan(wSt).InclusiveSum(laneDoorsWanted, doorSlot, doorsWantedTotal);
+        doorSlot -= laneDoorsWanted;
         uint myDoors = 0;
         if (doorSlot < processorTally) {
-          myDoors = umin(desiredDoors, processorTally - doorSlot);
+          myDoors = umin(laneDoorsWanted, processorTally - doorSlot);
         }
-        auto tasksToSchedule = umin(lTt, myDoors * kExpertWave);
-        // Re-pack by doors actually issued so a short residue cannot leave a
-        // hole in rQ (that hole looked like a busy processor and stalled the grid).
+        tasksToSchedule = umin(tasksToSchedule, myDoors * span);
         const uint actualDoors = tasksToSchedule
-          ? (tasksToSchedule + kExpertWave - 1u) / kExpertWave
+          ? (tasksToSchedule + span - 1u) / span
           : 0u;
         uint packedSlot = 0;
         uint packedTotal = 0;
@@ -223,10 +234,11 @@ namespace flashmoe::scheduler
             tasksToSchedule -= canSchedule;
             tqState[j].tasks -= canSchedule;
             tqState[j].tQTail += canSchedule;
-            scheduleWave(processors_v, canSchedule, kExpertWave, qIdx, door, rqBase, rQ, pDB);
+            scheduleWave(processors_v, canSchedule, span, qIdx, door, rqBase, rQ, pDB);
           }
         }
         doors = packedTotal;
+        (void)doorsWantedTotal;
       }
       else {
         // Original one-doorbell-per-tile path (subscriber mixes, tiny tallies).
