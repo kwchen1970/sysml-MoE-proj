@@ -87,8 +87,8 @@ namespace flashmoe::processor
             const typename TileGEMM::AccumType& swishBeta,
             const int& M, const int& N, const int& K, const int& tileIdx) {
     // Stage the activated gate through the output tile in gmem instead of a
-    // second smem C tile. That frees 32 KB so Ampere can restore pS=2 at
-    // bK=64 without growing past the 2-block/SM smem budget.
+    // second smem C tile. That drops Ampere gated AB smem to 32 KB so three
+    // blocks can fit per SM (with launch_bounds=3 and MAX_PROCESSORS=384).
     using BLAS = TileGEMM::BLAS;
     auto accumulator = BLAS::suggest_accumulator();
     using BM = cute::Int<cublasdx::size_of<BLAS>::m>;

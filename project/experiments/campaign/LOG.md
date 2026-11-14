@@ -132,10 +132,12 @@ Candidate: same scheduler + Ampere gated `bK=64`, `pS=1` (job 61293689).
 
 Anchor BK64 rounds were 3.812 / 3.813 / 3.815 ms (spread <0.01 ms). Occupancy stayed 2 blocks/SM. Error stayed in band (often lower). AB smem footprint matches bK=32/pS=2; the win is fewer K-loop trips on the fused tile.
 
-## Next: gate-through-gmem + Ampere bK=64 / pS=2
+## Next: gate-through-gmem + 3 blocks/SM on top of BK64
 
-The gated path kept a second 32 KB C tile in smem as a gate cache. Staging that activation through the output tile in gmem frees the budget.
+The gated path kept a second 32 KB C tile in smem as a gate cache. Staging that activation through the output tile in gmem drops Ampere gated AB smem to 32 KB at `bK=64 / pS=1`.
 
-Tried spending it on `bK=128 / pS=1` first (job 61295788): every shape hit `cudaErrorIllegalAddress` — cublasdx's smem layout for `Size<128,128,128>` overruns the 64 KB AB budget. Abandoned.
+Tried spending the freed budget on larger tiles first:
+- `bK=128 / pS=1` (job 61295788): illegal address on every shape.
+- `bK=64 / pS=2` (job 61295979): same illegal address — not a usable spend.
 
-Spend the freed 32 KB on `bK=64 / pS=2` instead: same K trips as BK64, but compute/copy overlap restored. Occupancy target remains 2. Compare against the BK64 binary with the interleaved A/B harness.
+Pivot to the resident-warps combo on top of BK64: gmem staging + `__launch_bounds__(threads, 3)` + `PROCESSOR_STATE_SIZE=12` (384 processors). Target occupancy 3 blocks/SM. Compare against the BK64 binary (occupancy 2) with the interleaved A/B harness. Prior resident-warps on bK=32 was mixed; re-check with bK=64.

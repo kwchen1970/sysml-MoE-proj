@@ -163,7 +163,10 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  __launch_bounds__(Config::Threads::value, 1)
+  // minBlocksPerMultiprocessor is 3. With the gate staged through gmem, Ampere
+  // gated AB smem is 32 KB; forcing 3 resident blocks cuts registers so the SM
+  // can actually host them (was 255 regs / 2 blocks).
+  __launch_bounds__(Config::Threads::value, 3)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
