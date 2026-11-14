@@ -791,11 +791,12 @@ void drive(const int argc, char** argv) {
   constexpr int bN0 = sizeof(Element) == 2 ? 128 : 64; // 144 for gpt-oss
   constexpr int bN1 = bN0;
   // Ampere gated: stage the activated gate through gmem (no second smem C
-  // tile), then spend the freed 32 KB on bK=128 / pS=1. AB smem stays 64 KB
-  // (same as the old gated bK=32/pS=2 + gateCache footprint) while K-loop
-  // trips drop another 2x vs bK=64.
+  // tile). bK=128/pS=1 illegal-addressed on A100 (cublasdx smem layout for
+  // Size<128,128,128> overruns the 64 KB AB budget), so spend the freed 32 KB
+  // on bK=64/pS=2: same K trips as the BK64 win, but with compute/copy overlap
+  // restored. AB smem stays 64 KB; occupancy target remains 2 blocks/SM.
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
-  arch >= 800 ? (mt == flashmoe::MLPMatmulType::gated ? 128 : 64) : 32;
+  arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
   if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
     throw std::invalid_argument("H is invalid");
@@ -803,9 +804,8 @@ void drive(const int argc, char** argv) {
   if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
     throw std::invalid_argument("I is invalid");
   }
-  constexpr auto pS = arch >= 900 ? 3 : arch >= 800
-    ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
-    : 1; // Hopper 3; Ampere gated uses one stage with bK=128
+  constexpr auto pS = arch >= 900 ? 3 : arch >= 800 ? 2
+    : 1; // Hopper 3; Ampere gated uses two stages with bK=64 after gmem staging
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128; // hopper, S >= 4096 -> bM = 256
   static_assert(bM >= 1);
   if (S < 1 || (S > bM && S % bM != 0)) {
