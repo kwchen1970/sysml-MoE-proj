@@ -86,28 +86,24 @@ namespace flashmoe::processor
             const typename TileGEMM::AccumType& swishAlpha,
             const typename TileGEMM::AccumType& swishBeta,
             const int& M, const int& N, const int& K, const int& tileIdx) {
-    auto* __restrict__ gateCache = workspace + cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
-        TileGEMM::SharedSizeAB::value), TileGEMM::GeneralAlignment::value);
+    // Stage the activated gate through the output tile in gmem instead of a
+    // second smem C tile. That frees 32 KB so Ampere can grow bK to 128 at
+    // the same dynamic-smem footprint (and still keep 2 blocks/SM).
     using BLAS = TileGEMM::BLAS;
     auto accumulator = BLAS::suggest_accumulator();
     using BM = cute::Int<cublasdx::size_of<BLAS>::m>;
     using BN = cute::Int<cublasdx::size_of<BLAS>::n>;
     const auto tileCoord = tile::idx2Coord(M / BM{}, N / BN{}, tileIdx);
-    // compute Tile
     constexpr TileGEMM tileMainloop{};
     tileMainloop(workspace, a, b, accumulator, M, N, K, tileCoord);
     __syncthreads();
-    // gmem -> rmem: prefetch bias
     const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
     auto d_frag = cublasdx::make_fragment_like<ElementC>(accumulator.get_results());
     cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accumulator);
-    // Epilogue
-    constexpr Activation act{}; // activation function like silu, gelu, etc
-    // ElementC -> accum type
+    constexpr Activation act{};
     using AccumType = decltype(accumulator)::value_type;
     static_assert(cuda::std::is_same_v<AccumType, typename TileGEMM::AccumType>);
     constexpr Converter<AccumType, ElementC> loadConv{};
-    // accum type -> ElementC
     constexpr Converter<ElementC, AccumType> storeConv{};
     const auto c_frag = accumulator.get_results();
     constexpr int accum_size = cublasdx::size(c_frag);
@@ -115,34 +111,30 @@ namespace flashmoe::processor
       const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
       d_frag(i) = storeConv(swishAlpha * act(g));
     });
-    // rmem -> smem, cache gate results
-    // holding in registers otherwise would blow up pressure
-    auto sGate = cublasdx::make_tensor(reinterpret_cast<ElementC*>(gateCache), BLAS::suggest_layout_smem_c());
-    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sGate, accumulator);
-    // now, compute v tile
+    auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
+    auto sC = cublasdx::make_tensor(reinterpret_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
+    __syncthreads();
+    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
+    __syncthreads();
+    cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
+    __syncthreads();
     tileMainloop(workspace, a, bV, accumulator, M, N, K, tileCoord);
     auto cv_frag = accumulator.get_results();
     const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
     cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accumulator);
     cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
-      // x = (a @ bV) + biasV
       cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
     });
-    // smem -> rmem, load g tile
     __syncthreads();
-    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sGate, d_frag, accumulator);
+    cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(gC, sC);
+    __syncthreads();
+    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sC, d_frag, accumulator);
     cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
-      // y = x * (act(a @ b))
       d_frag(i) = storeConv(cv_frag(i) * loadConv(d_frag(i)));
     });
-    auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
-    // TODO For Optimizing the below copy, TMA may help
-    // rmem -> smem
-    auto sC = cublasdx::make_tensor(reinterpret_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
     __syncthreads();
     cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
     __syncthreads();
-    // smem -> gmem
     cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
   }
 

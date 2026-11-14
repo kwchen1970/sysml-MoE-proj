@@ -77,8 +77,10 @@ namespace flashmoe::moe
     using Element = Config::DType;
 
     constexpr int bM = bM0;
+    // Gated activation is staged through the output tile in gmem, so GEMM0 no
+    // longer reserves a second C tile in shared memory.
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(sizeof(Element) * bK0 * pSK0 * (bM + bN0),
-    sizeof(Element) * bM * bN0) + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
+    sizeof(Element) * bM * bN0), MAX_ALIGNMENT);
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
       sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
