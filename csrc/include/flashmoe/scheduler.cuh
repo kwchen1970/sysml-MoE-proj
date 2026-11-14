@@ -185,18 +185,23 @@ namespace flashmoe::scheduler
       const uint headTotal = __reduce_add_sync(0xffffffff, headTasks);
       const bool allowWave = headTotal == 0 && taskTally > processorTally;
       uint doors = 0;
+      bool didWave = false;
       if (allowWave) {
         // Cover a backlog without dropping concurrency: wake every free
         // processor, each running `span` tiles where
         // span = clamp(ceil(tasks / processors), 1, kExpertWave).
+        // Lane tile shares come only from lTt (not queueSlot); queueSlot is a
+        // 1:1 door index and must not drive multi-tile waves.
         const uint tileCap = processorTally * kExpertWave;
         const uint tasks = cute::min(tileCap, taskTally);
         const uint spanRaw = (tasks + processorTally - 1u) / processorTally;
         const uint span = umin(kExpertWave, spanRaw < 1u ? 1u : spanRaw);
-        // Lane tile share from the original InclusiveSum, clipped to this round.
-        auto tasksToSchedule = (lTt > 0 && queueSlot < prefixTaskSum + tasks)
-          ? umin(lTt, prefixTaskSum + tasks - queueSlot)
-          : 0u;
+        uint tileSlot = 0;
+        uint tileTotal = 0;
+        __syncwarp();
+        WarpScan(wSt).InclusiveSum(lTt, tileSlot, tileTotal);
+        tileSlot -= lTt;
+        auto tasksToSchedule = (tileSlot < tasks) ? umin(lTt, tasks - tileSlot) : 0u;
         const uint laneDoorsWanted = tasksToSchedule
           ? (tasksToSchedule + span - 1u) / span
           : 0u;
@@ -218,30 +223,35 @@ namespace flashmoe::scheduler
         __syncwarp();
         WarpScan(wSt).InclusiveSum(actualDoors, packedSlot, packedTotal);
         packedSlot -= actualDoors;
-        lTt -= tasksToSchedule;
-        const uint tilesNow = __reduce_add_sync(0xffffffff, tasksToSchedule);
-        prefixTaskSum += tilesNow;
-        scheduled += tilesNow;
-        taskTally -= tilesNow;
-        uint door = packedSlot;
-        const uint rqBase = gRQIdx + issuedDoors;
-        #pragma unroll
-        for (uint j = sL; j < tqState.size(); ++j) {
-          if (tqState[j].tasks && tasksToSchedule) {
-            const auto canSchedule = cute::min(tasksToSchedule, tqState[j].tasks);
-            const auto qHead = (schedulerCount * (gTbO + (j - sL)) + threadIdx.x) * tilesN1 + tqState[j].tQTail;
-            const auto qIdx = tQOffset + qHead;
-            tasksToSchedule -= canSchedule;
-            tqState[j].tasks -= canSchedule;
-            tqState[j].tQTail += canSchedule;
-            scheduleWave(processors_v, canSchedule, span, qIdx, door, rqBase, rQ, pDB);
+        if (packedTotal != 0) {
+          lTt -= tasksToSchedule;
+          const uint tilesNow = __reduce_add_sync(0xffffffff, tasksToSchedule);
+          prefixTaskSum += tilesNow;
+          scheduled += tilesNow;
+          taskTally -= tilesNow;
+          uint door = packedSlot;
+          const uint rqBase = gRQIdx + issuedDoors;
+          #pragma unroll
+          for (uint j = sL; j < tqState.size(); ++j) {
+            if (tqState[j].tasks && tasksToSchedule) {
+              const auto canSchedule = cute::min(tasksToSchedule, tqState[j].tasks);
+              const auto qHead = (schedulerCount * (gTbO + (j - sL)) + threadIdx.x) * tilesN1 + tqState[j].tQTail;
+              const auto qIdx = tQOffset + qHead;
+              tasksToSchedule -= canSchedule;
+              tqState[j].tasks -= canSchedule;
+              tqState[j].tQTail += canSchedule;
+              scheduleWave(processors_v, canSchedule, span, qIdx, door, rqBase, rQ, pDB);
+            }
           }
+          doors = packedTotal;
+          didWave = true;
         }
-        doors = packedTotal;
         (void)doorsWantedTotal;
+        (void)tileTotal;
       }
-      else {
-        // Original one-doorbell-per-tile path (subscriber mixes, tiny tallies).
+      if (!didWave) {
+        // Original one-doorbell-per-tile path (subscriber mixes, tiny tallies,
+        // or a wave pack that could not issue doors).
         const auto tasks = cute::min(processorTally, taskTally);
         prefixTaskSum += tasks;
         scheduled += tasks;
