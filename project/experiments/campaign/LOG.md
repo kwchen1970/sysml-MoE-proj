@@ -98,3 +98,11 @@ This branch (`cursor/scheduler-expert-wave-378d`) keeps the fused megakernel and
 3. Raises `kExpertWave` from 4 to 8 so affinity’s concentrated expert amortizes more doorbells per wake.
 
 `PROCESSOR_STATE_SIZE` stays at 8 on Ampere so the scheduler warp does not grow its ready-queue sweep. Compare with the interleaved A/B harness against the single-expert affinity binary already on `exp/scheduler-throughput`.
+
+## Expert wave under affinity (measured)
+
+Job 61292465 on Perlmutter A100-SXM4-40GB, interleaved A/B, ROUNDS=3 RUNS=16.
+
+Sole-owner waves with the processor always in the span loop were **slower** than single-expert affinity on most shapes (about +4% at the anchor, up to +12% at S=8192). Multi-lane packing hung and was abandoned.
+
+Follow-up: keep the doorbell span encoding, but restore the original one-tile processor path when the high byte is zero so the common case pays no extra barriers. Re-measure.
