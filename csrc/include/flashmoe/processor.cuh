@@ -295,12 +295,15 @@ namespace flashmoe::processor
         // broadcast new payload from thread 0 to other threads in the warp
         payload = __shfl_sync(0xffffffff, payload, 0);
         tqs = cuda::std::bit_cast<TQSignal>(payload);
+        // Derive span from the broadcast payload so every lane agrees before
+        // touching shared waveSpan (thread 0 alone writing it races the read).
+        const uint hi = tqs.signal >> kSignalIndexBits;
+        const uint spanLocal = tqs.interrupt != 0 || hi == 0 ? 1u : hi;
         if (threadIdx.x == 0) {
-          const uint hi = tqs.signal >> kSignalIndexBits;
-          waveSpan = tqs.interrupt != 0 || hi == 0 ? 1u : hi;
+          waveSpan = spanLocal;
         }
         // One-tile doorbells keep the original load path (no extra barriers).
-        if (waveSpan == 1u) {
+        if (spanLocal == 1u) {
           const auto* __restrict__ gtQ = pA.tQ + tqs.decodeSig();
           if (!tqs.interrupt && threadIdx.x < taskWidth) {
             reinterpret_cast<uint4*>(&currentTask)[threadIdx.x] = reinterpret_cast<const uint4*>(gtQ)[threadIdx.x];
