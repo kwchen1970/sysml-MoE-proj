@@ -32,7 +32,9 @@ namespace flashmoe {
   // OS block and doorbell path amortize across that expert's 128x128 tiles.
   constexpr uint kSignalIndexBits = 24;
   constexpr uint kSignalIndexMask = (1u << kSignalIndexBits) - 1u;
-  constexpr uint kExpertWave = 8;
+  // 4 matched the first megakernel-wave experiment. Larger values over-serialized
+  // a processor on the login A100 smoke (paper shape got slower at 8).
+  constexpr uint kExpertWave = 4;
 
   struct __align__(8) TQSignal {
     uint signal; // one ahead

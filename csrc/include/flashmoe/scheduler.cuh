@@ -197,12 +197,22 @@ namespace flashmoe::scheduler
           myDoors = umin(desiredDoors, processorTally - doorSlot);
         }
         auto tasksToSchedule = umin(lTt, myDoors * kExpertWave);
+        // Re-pack by doors actually issued so a short residue cannot leave a
+        // hole in rQ (that hole looked like a busy processor and stalled the grid).
+        const uint actualDoors = tasksToSchedule
+          ? (tasksToSchedule + kExpertWave - 1u) / kExpertWave
+          : 0u;
+        uint packedSlot = 0;
+        uint packedTotal = 0;
+        __syncwarp();
+        WarpScan(wSt).InclusiveSum(actualDoors, packedSlot, packedTotal);
+        packedSlot -= actualDoors;
         lTt -= tasksToSchedule;
         const uint tilesNow = __reduce_add_sync(0xffffffff, tasksToSchedule);
         prefixTaskSum += tilesNow;
         scheduled += tilesNow;
         taskTally -= tilesNow;
-        uint door = doorSlot;
+        uint door = packedSlot;
         const uint rqBase = gRQIdx + issuedDoors;
         #pragma unroll
         for (uint j = sL; j < tqState.size(); ++j) {
@@ -216,7 +226,7 @@ namespace flashmoe::scheduler
             scheduleWave(processors_v, canSchedule, kExpertWave, qIdx, door, rqBase, rQ, pDB);
           }
         }
-        doors = __reduce_add_sync(0xffffffff, myDoors);
+        doors = packedTotal;
       }
       else {
         // Original one-doorbell-per-tile path (subscriber mixes, tiny tallies).
