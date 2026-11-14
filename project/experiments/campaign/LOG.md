@@ -96,6 +96,5 @@ This branch (`cursor/scheduler-expert-wave-378d`) keeps the fused megakernel and
 1. Enables multi-lane waves whenever a scheduling pass holds only block-queue tiles (the common affinity GEMM1 case).
 2. Budgets ready-queue slots by doorbells, not tiles, so waves stay correct across refill rounds.
 3. Raises `kExpertWave` from 4 to 8 so affinity’s concentrated expert amortizes more doorbells per wake.
-4. Raises Ampere `MAX_PROCESSORS` to 384 so a future occupancy rise cannot reject the grid.
 
-Compare with the interleaved A/B harness against the single-expert affinity binary already on `exp/scheduler-throughput`.
+`PROCESSOR_STATE_SIZE` stays at 8 on Ampere so the scheduler warp does not grow its ready-queue sweep. Compare with the interleaved A/B harness against the single-expert affinity binary already on `exp/scheduler-throughput`.

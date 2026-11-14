@@ -24,8 +24,7 @@ namespace flashmoe::scheduler {
 #elif FLASHMOE_ARCH >= 900
   constexpr int PROCESSOR_STATE_SIZE = 5;
 #else
-  // 12*32=384. Keeps the fused grid legal if occupancy later rises above 2.
-  constexpr int PROCESSOR_STATE_SIZE = 12;
+  constexpr int PROCESSOR_STATE_SIZE = 8;
 #endif
 #else
   constexpr int PROCESSOR_STATE_SIZE = 8; // 8 is recommended
