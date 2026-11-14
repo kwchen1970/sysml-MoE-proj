@@ -177,128 +177,66 @@ namespace flashmoe::scheduler
           headTasks += tqState[j].tasks;
         }
       }
-      // Affinity (isMedley) used to disable waves. Wave only when this pass is
-      // block-queue-only AND there are more ready tiles than free processors.
-      // Packing when tiles <= processors would serialize work onto fewer CTAs
-      // and lose parallelism; the win is covering a backlog in one doorbell round
-      // while still waking every free processor.
-      const uint headTotal = __reduce_add_sync(0xffffffff, headTasks);
-      const bool allowWave = headTotal == 0 && taskTally > processorTally;
-      uint doors = 0;
-      bool didWave = false;
-      if (allowWave) {
-        // Cover a backlog without dropping concurrency: wake every free
-        // processor, each running `span` tiles where
-        // span = clamp(ceil(tasks / processors), 1, kExpertWave).
-        // Lane tile shares come only from lTt (not queueSlot); queueSlot is a
-        // 1:1 door index and must not drive multi-tile waves.
-        const uint tileCap = processorTally * kExpertWave;
-        const uint tasks = cute::min(tileCap, taskTally);
-        const uint spanRaw = (tasks + processorTally - 1u) / processorTally;
-        const uint span = umin(kExpertWave, spanRaw < 1u ? 1u : spanRaw);
-        uint tileSlot = 0;
-        uint tileTotal = 0;
-        __syncwarp();
-        WarpScan(wSt).InclusiveSum(lTt, tileSlot, tileTotal);
-        tileSlot -= lTt;
-        auto tasksToSchedule = (tileSlot < tasks) ? umin(lTt, tasks - tileSlot) : 0u;
-        const uint laneDoorsWanted = tasksToSchedule
-          ? (tasksToSchedule + span - 1u) / span
-          : 0u;
-        uint doorSlot = 0;
-        uint doorsWantedTotal = 0;
-        __syncwarp();
-        WarpScan(wSt).InclusiveSum(laneDoorsWanted, doorSlot, doorsWantedTotal);
-        doorSlot -= laneDoorsWanted;
-        uint myDoors = 0;
-        if (doorSlot < processorTally) {
-          myDoors = umin(laneDoorsWanted, processorTally - doorSlot);
-        }
-        tasksToSchedule = umin(tasksToSchedule, myDoors * span);
-        const uint actualDoors = tasksToSchedule
-          ? (tasksToSchedule + span - 1u) / span
-          : 0u;
-        uint packedSlot = 0;
-        uint packedTotal = 0;
-        __syncwarp();
-        WarpScan(wSt).InclusiveSum(actualDoors, packedSlot, packedTotal);
-        packedSlot -= actualDoors;
-        if (packedTotal != 0) {
-          lTt -= tasksToSchedule;
-          const uint tilesNow = __reduce_add_sync(0xffffffff, tasksToSchedule);
-          prefixTaskSum += tilesNow;
-          scheduled += tilesNow;
-          taskTally -= tilesNow;
-          uint door = packedSlot;
-          const uint rqBase = gRQIdx + issuedDoors;
-          #pragma unroll
-          for (uint j = sL; j < tqState.size(); ++j) {
-            if (tqState[j].tasks && tasksToSchedule) {
-              const auto canSchedule = cute::min(tasksToSchedule, tqState[j].tasks);
-              const auto qHead = (schedulerCount * (gTbO + (j - sL)) + threadIdx.x) * tilesN1 + tqState[j].tQTail;
-              const auto qIdx = tQOffset + qHead;
-              tasksToSchedule -= canSchedule;
-              tqState[j].tasks -= canSchedule;
-              tqState[j].tQTail += canSchedule;
-              scheduleWave(processors_v, canSchedule, span, qIdx, door, rqBase, rQ, pDB);
-            }
-          }
-          doors = packedTotal;
-          didWave = true;
-        }
-        (void)doorsWantedTotal;
-        (void)tileTotal;
-      }
-      if (!didWave) {
-        // Original one-doorbell-per-tile path (subscriber mixes, tiny tallies,
-        // or a wave pack that could not issue doors).
-        const auto tasks = cute::min(processorTally, taskTally);
-        prefixTaskSum += tasks;
-        scheduled += tasks;
-        taskTally -= tasks;
-        uint plainDoors = 0;
-        if (lTt > 0 && queueSlot < prefixTaskSum) {
-          auto tasksToSchedule = umin(lTt, prefixTaskSum - queueSlot);
-          lTt -= tasksToSchedule;
-          if (isMedley) {
-            if constexpr (sL > 0) {
-              #pragma unroll
-              for (uint j = 0; j < sL; ++j) {
-                if (tqState[j].tasks > 0 && tasksToSchedule) {
-                  const auto canSchedule = cute::min(tasksToSchedule, tqState[j].tasks);
-                  const auto qIdx = DQ::next<DQType::stride, subscriberCount>(
-                    j * schedulerCount + threadIdx.x,tqState[j].tQTail);
-                  tasksToSchedule -= canSchedule;
-                  tqState[j].tasks -= canSchedule;
-                  // have to increment tails as we will revisit this queue later on
-                  tqState[j].tQTail += canSchedule;
-                  const auto cSetB = canSchedule / WORK_SET_SIZE;
-                  schedule<DQType::stride, subscriberCount>(processors_v, cSetB, canSchedule, qIdx,
-                                                            queueSlot, gRQIdx, rQ, pDB);
-                  plainDoors += canSchedule;
-                }
+      // Sole-owner wave under affinity: one lane holds every ready block-queue
+      // tile and there are enough free processors for span-sized runs. The old
+      // !isMedley gate made this unreachable from runAffinity. Multi-lane wave
+      // attempts hung on A100; keep the proven sole-owner shape.
+      const bool soleOwner = prefixTaskSum == 0 && taskTally >= kExpertWave &&
+        __any_sync(0xffffffff, queueSlot == 0 && lTt >= taskTally && headTasks == 0);
+      const uint wavePops = (taskTally + kExpertWave - 1) / kExpertWave;
+      const bool wave = soleOwner && wavePops <= processorTally;
+      const auto tasks = wave ? taskTally : cute::min(processorTally, taskTally);
+      prefixTaskSum += tasks;
+      scheduled += tasks;
+      taskTally -= tasks;
+      uint waveDoor = 0;
+      uint plainDoors = 0;
+      if (lTt > 0 && queueSlot < prefixTaskSum) {
+        auto tasksToSchedule = umin(lTt, prefixTaskSum - queueSlot);
+        lTt -= tasksToSchedule;
+        if (isMedley) {
+          if constexpr (sL > 0) {
+            #pragma unroll
+            for (uint j = 0; j < sL; ++j) {
+              if (tqState[j].tasks > 0 && tasksToSchedule) {
+                const auto canSchedule = cute::min(tasksToSchedule, tqState[j].tasks);
+                const auto qIdx = DQ::next<DQType::stride, subscriberCount>(
+                  j * schedulerCount + threadIdx.x,tqState[j].tQTail);
+                tasksToSchedule -= canSchedule;
+                tqState[j].tasks -= canSchedule;
+                tqState[j].tQTail += canSchedule;
+                const auto cSetB = canSchedule / WORK_SET_SIZE;
+                schedule<DQType::stride, subscriberCount>(processors_v, cSetB, canSchedule, qIdx,
+                                                          queueSlot, gRQIdx, rQ, pDB);
+                plainDoors += canSchedule;
               }
             }
           }
-          #pragma unroll
-          for (uint j = sL; j < tqState.size(); ++j) {
-            if (tqState[j].tasks && tasksToSchedule) {
-              const auto canSchedule = cute::min(tasksToSchedule, tqState[j].tasks);
-              const auto qHead = (schedulerCount * (gTbO + (j - sL)) + threadIdx.x) * tilesN1 + tqState[j].tQTail;
-              const auto qIdx = tQOffset + qHead;
-              tasksToSchedule -= canSchedule;
-              tqState[j].tasks -= canSchedule;
-              // checkpoint state in case of partial scheduling
-              tqState[j].tQTail += canSchedule;
-              const auto cSetB = canSchedule / WORK_SET_SIZE;
+        }
+        #pragma unroll
+        for (uint j = sL; j < tqState.size(); ++j) {
+          if (tqState[j].tasks && tasksToSchedule) {
+            const auto canSchedule = cute::min(tasksToSchedule, tqState[j].tasks);
+            const auto qHead = (schedulerCount * (gTbO + (j - sL)) + threadIdx.x) * tilesN1 + tqState[j].tQTail;
+            const auto qIdx = tQOffset + qHead;
+            const bool oneQueue = canSchedule == tasksToSchedule;
+            tasksToSchedule -= canSchedule;
+            tqState[j].tasks -= canSchedule;
+            tqState[j].tQTail += canSchedule;
+            const auto cSetB = canSchedule / WORK_SET_SIZE;
+            if (wave && queueSlot == 0 && oneQueue) {
+              scheduleWave(processors_v, canSchedule, kExpertWave, qIdx, waveDoor,
+                           gRQIdx + issuedDoors, rQ, pDB);
+            }
+            else {
               schedule<DQType::block>(processors_v, cSetB, canSchedule,
                                       qIdx, queueSlot, gRQIdx, rQ, pDB);
               plainDoors += canSchedule;
             }
           }
         }
-        doors = __reduce_add_sync(0xffffffff, plainDoors);
       }
+      const uint doors = __reduce_add_sync(0xffffffff, waveDoor + plainDoors);
       processorTally -= doors;
       issuedDoors += doors;
     }
