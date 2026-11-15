@@ -152,6 +152,10 @@ All three spends of the freed 32 KB crashed (`cudaErrorIllegalAddress`): bK=128,
 
 Diagnostic job **61347583**: gmem staging with the 64 KB GEMM0 surcharge still reserved also illegal-addressed on every shape. The staging sequence itself is wrong on this tree (or incompatible with BK64’s cublasdx layouts). Abandoned; restored gateCache path.
 
-## Next: `__launch_bounds__(threads, 2)` on BK64
+## Closed: `__launch_bounds__(threads, 2)` on BK64
 
-BK64 already runs at 2 blocks/SM. Raising `minBlocksPerMultiprocessor` from 1 → 2 asks the compiler to drop the 255-reg unconstrained schedule and free ILP inside the same occupancy. No smem change. Compare against the BK64 binary.
+Job **61348254**: smoke illegal-addressed. Forcing minBlocks=2 on this 255-reg kernel is not safe. Reverted to `launch_bounds(..., 1)`.
+
+## Next: bM=64 / bK=64 / pS=2 (same 64 KB footprint)
+
+Shrink the M tile so a two-stage K pipeline fits beside the gateCache without growing past 64 KB. Same K trips as BK64, compute/copy overlap restored, 2× M-tiles. Compare against the BK64 binary (`bM=128/bK=64/pS=1`).
