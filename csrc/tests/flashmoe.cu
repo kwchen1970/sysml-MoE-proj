@@ -791,11 +791,9 @@ void drive(const int argc, char** argv) {
   // to minimize instantiated templates
   constexpr int bN0 = sizeof(Element) == 2 ? 128 : 64; // 144 for gpt-oss
   constexpr int bN1 = bN0;
-  // Ampere gated: keep bK=64 (fewer K trips than bK=32) but shrink bM to 64
-  // so a two-stage pipeline fits in the same 64 KB gated footprint as
-  // bM=128/bK=64/pS=1 + gateCache. Restores compute/copy overlap; costs 2x
-  // M-tiles (more scheduler doorbells). gmem-staging and launch_bounds=2 both
-  // illegal-addressed on this tree.
+  // Ampere gated: bK=64 with one K-stage keeps AB smem at 32 KB (same as
+  // bK=32/pS=2) but halves K-loop trips. Campaign notes with single-expert
+  // affinity measured about 3.81 ms at the anchor vs ~3.92 ms at bK=32/pS=2.
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
@@ -805,10 +803,10 @@ void drive(const int argc, char** argv) {
   if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
     throw std::invalid_argument("I is invalid");
   }
-  constexpr auto pS = arch >= 900 ? 3 : arch >= 800 ? 2
-    : 1; // Hopper 3; Ampere gated: two stages at bM=64/bK=64
-  constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64
-    : (arch >= 800 && mt == flashmoe::MLPMatmulType::gated ? 64 : 128);
+  constexpr auto pS = arch >= 900 ? 3 : arch >= 800
+    ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
+    : 1; // Hopper 3; Ampere gated uses one stage with bK=64
+  constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128; // hopper, S >= 4096 -> bM = 256
   static_assert(bM >= 1);
   if (S < 1 || (S > bM && S % bM != 0)) {
     throw std::invalid_argument("S is invalid for this benchmark");

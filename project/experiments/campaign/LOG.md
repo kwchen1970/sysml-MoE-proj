@@ -156,6 +156,10 @@ Diagnostic job **61347583**: gmem staging with the 64 KB GEMM0 surcharge still r
 
 Job **61348254**: smoke illegal-addressed. Forcing minBlocks=2 on this 255-reg kernel is not safe. Reverted to `launch_bounds(..., 1)`.
 
-## Next: bM=64 / bK=64 / pS=2 (same 64 KB footprint)
+## Closed: bM=64 / bK=64 / pS=2
 
-Shrink the M tile so a two-stage K pipeline fits beside the gateCache without growing past 64 KB. Same K trips as BK64, compute/copy overlap restored, 2× M-tiles. Compare against the BK64 binary (`bM=128/bK=64/pS=1`).
+Job **61348777**: illegal address on every A/B shape (smoke RC was a false positive from a script bug). Likely cublasdx smem layout cosize exceeds the formula for pS=2 at this tile. Reverted tile config to BK64.
+
+## Next: exclusive affinity on top of BK64
+
+`narrowToLongPole` always clears `hot1` (never keep a partner). Prior campaign measured ~0.5% at the anchor before BK64; re-check interleaved against the BK64 binary. Scheduler-only — no tile/smem change.
