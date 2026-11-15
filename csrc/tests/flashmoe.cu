@@ -792,22 +792,18 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB6: HYB2 shared-A (bN0=64, I<4096, k<=2) + deepen GEMM1
-  // pipe to pS1=2 (down-proj K is I, usually >> 2 stages). GEMM0 stays pS0=1.
+  // Ampere gated HYB8: HYB2 shared-A (bN0=64) but widen GEMM0 K tile to 128
+  // to cut K-loop trips; GEMM1 keeps bK=64 (I=1408 anchor not divisible by 128).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
-  constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
+  constexpr int bKBase = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
-  constexpr int bK1 = bK0;
-  constexpr auto pS0 = arch >= 900 ? 3 : arch >= 800
+  constexpr int bK1 = bKBase;
+  constexpr auto pS = arch >= 900 ? 3 : arch >= 800
     ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1;
-  // Ampere gated: GEMM1 can afford a 2-stage pipe (prior full pS=2 failed only
-  // when paired with broken gmem gate staging).
-  constexpr auto pS1 = (arch >= 800 && mt == flashmoe::MLPMatmulType::gated && sizeof(Element) == 2)
-    ? 2 : pS0;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
   static_assert(bM >= 1);
-  if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
+  if (H < bN1 || H % bN1 != 0) {
     throw std::invalid_argument("H is invalid");
   }
   if (S < 1 || (S > bM && S % bM != 0)) {
@@ -818,49 +814,50 @@ void drive(const int argc, char** argv) {
   }
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C) {
+  auto launch = [&](auto bN0C, auto bK0C) {
     constexpr int bN0 = decltype(bN0C)::value;
+    constexpr int bK0 = decltype(bK0C)::value;
+    if (H <= bK0 || H % bK0 != 0) {
+      throw std::invalid_argument("H is invalid for bK0");
+    }
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
-    }
-    if (pS1 > I / bK1) {
-      throw std::invalid_argument("pS1 exceeds GEMM1 K tiles");
     }
     switch (E) {
       case 8:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         }
         break;
       case 16:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 16>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 16>(opts);
         }
         break;
       case 32:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 32>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 32>(opts);
         }
         break;
       default:
         if (E % 32 == 0) {
           if (k > 1) {
-            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
             flashmoe::GateReductionLevel::multiBlock, 32>(opts);
           } else {
-            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
             flashmoe::GateReductionLevel::multiBlock, 32>(opts);
           }
         }
@@ -868,9 +865,9 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{});
+    launch(cute::Int<64>{}, cute::Int<128>{});
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{});
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<bKBase>{});
   }
 }
 
