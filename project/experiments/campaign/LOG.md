@@ -184,6 +184,10 @@ Job **61349915** after a full `flashmoe/` sync: smoke and every A/B shape illega
 
 Job **61350226**: smoke OK, error in band. Mean −0.9% / median −1.7% over 11 shapes, but **anchor +1.8%** (PS1G1 rounds 4.24 / 4.13 / 4.09 vs BK64 3.87 / 4.52 / 3.84). Not a keep — GEMM1 double-buffering does not beat fewer K trips at the gated anchor.
 
-## Next: asymmetric GEMM1 bK=128 / pS=1 on BK64
+## Closed: asymmetric GEMM1 bK=128 / pS=1 (anchor regression)
 
-Same 64 KB AB budget on GEMM1, spent on wider K tiles instead of a second stage. GEMM0 stays `bK=64/pS=1` + gateCache.
+Job **61350550**: smoke OK, but **anchor +16.4%** (4.50 vs 3.87 ms) with tight BK64 rounds. Some k=2 shapes improved; gated k=6 is GEMM0-bound. Reverted to symmetric BK64.
+
+## Next: re-test gmem staging alone on clean BK64
+
+Earlier “gmem with surcharge kept” (61347583) was on the mixed tree. Job next: stage gate through gmem, keep 64 KB GEMM0 reservation, `bK=64/pS=1` — isolates staging from smem spends.
