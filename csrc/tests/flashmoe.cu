@@ -372,10 +372,9 @@ void kickstart(const Options& opts) {
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
-  constexpr auto gateCacheBytes = (mt == flashmoe::MLPMatmulType::gated && bN0 > 64)
-    ? sizeof(Element) * bM * bN0 : 0;
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
-    + gateCacheBytes, flashmoe::MAX_ALIGNMENT);
+    + (mt == flashmoe::MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0),
+    flashmoe::MAX_ALIGNMENT);
   constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
     sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
 
@@ -793,8 +792,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB4: HYB2 dispatch + register-resident gate (no gateCache smem)
-  // aiming for 2 blocks/SM on the shared-A path.
+  // Ampere gated HYB5: shared-A at bN0=32 (half the dual-accum pressure of
+  // HYB2's bN0=64) when I<4096 && k<=2; else BK64 two-pass bN0=128.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -813,7 +812,6 @@ void drive(const int argc, char** argv) {
   if (E != 8 && E != 16 && E != 32 && E % 32 != 0) {
     throw std::invalid_argument("E must be 8, 16, 32, or a multiple of 32 for this benchmark");
   }
-  // Same hybrid as HYB2; epilogue no longer needs gateCache smem.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
   auto launch = [&](auto bN0C) {
@@ -863,7 +861,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{});
+    launch(cute::Int<32>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{});
   }
