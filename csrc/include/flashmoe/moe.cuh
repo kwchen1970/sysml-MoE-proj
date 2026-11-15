@@ -71,15 +71,14 @@ namespace flashmoe::moe
     constexpr int bK1 = cute::get<2>(typename Config::G1TS{});
     constexpr int pSK1 = cute::get<3>(typename Config::G1TS{});
     constexpr int threads = Config::Threads::value;
+    constexpr auto mt = Config::MT::value;
     static_assert(bM0 == bM1);
 
     using Element = Config::DType;
 
     constexpr int bM = bM0;
-    // Gated activation is staged through the output tile in gmem, so GEMM0 no
-    // longer reserves a second C tile in shared memory.
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(sizeof(Element) * bK0 * pSK0 * (bM + bN0),
-    sizeof(Element) * bM * bN0), MAX_ALIGNMENT);
+    sizeof(Element) * bM * bN0) + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
       sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
@@ -163,10 +162,7 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // minBlocksPerMultiprocessor is 3. With the gate staged through gmem, Ampere
-  // gated AB smem is 32 KB; forcing 3 resident blocks cuts registers so the SM
-  // can actually host them (was 255 regs / 2 blocks).
-  __launch_bounds__(Config::Threads::value, 3)
+  __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
