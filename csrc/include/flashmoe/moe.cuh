@@ -77,8 +77,11 @@ namespace flashmoe::moe
     using Element = Config::DType;
 
     constexpr int bM = bM0;
-    constexpr auto GEMM0Sz = cutlass::round_up(cute::max(sizeof(Element) * bK0 * pSK0 * (bM + bN0),
-    sizeof(Element) * bM * bN0) + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
+    // Gated GEMM0 shares A across gate+up, so AB smem is (bM + 2*bN) wide.
+    constexpr auto gemm0AB = sizeof(Element) * bK0 * pSK0 *
+      (mt == MLPMatmulType::gated ? (bM + 2 * bN0) : (bM + bN0));
+    constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
+      + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
       sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));

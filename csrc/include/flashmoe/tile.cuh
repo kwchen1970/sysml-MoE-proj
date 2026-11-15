@@ -388,6 +388,8 @@ namespace flashmoe::tile
     using TileShape = cute::Shape<cute::Int<bM>, cute::Int<bN>, cute::Int<bK>>;
     using GeneralAlignment = cute::Int<cute::max(aAlignment, bAlignment, cAlignment)>;
     using SharedSizeAB = cute::Int<cutlass::round_up(bK * pipeStages * (bM + bN) * sizeof(Element), GeneralAlignment::value)>;
+    // Gate+up share A: one A tile and two B tiles per pipeline stage.
+    using SharedSizeABGated = cute::Int<cutlass::round_up(bK * pipeStages * (bM + 2 * bN) * sizeof(Element), GeneralAlignment::value)>;
     using SharedSizeC = cute::Int<cutlass::round_up(bM * bN * sizeof(Element), GeneralAlignment::value)>;
     using CArr = cute::C<cr>;
     using AAlign = cute::Int<aAlignment>;
@@ -445,6 +447,68 @@ namespace flashmoe::tile
         update_buffer<sBSS>(sB, sBP, ps);
         cpWait<(pipeStages - 1) - stage>();
         BLAS().execute(sA, sB, accumulator, transformOp, transformOp);
+      });
+    }
+
+    // Gated MLP: one A load feeds both gate and up weight tiles.
+    template <typename Accumulator, typename TileCoord>
+      requires(cute::rank_v<TileCoord> == 3 && cublasdx::is_blas_execution_v<BLAS>)
+    __device__ __forceinline__
+    void gated(void* __restrict__ const& workspace,
+               const Element* __restrict__ const& a,
+               const Element* __restrict__ const& bGate,
+               const Element* __restrict__ const& bUp,
+               Accumulator& accGate,
+               Accumulator& accUp,
+               const int& M, const int& N, const int& K, const TileCoord& tileCoord) const {
+      using TransformType = cuda::std::conditional_t<cuda::std::is_same_v<TranslatedElement, Element>,
+                                                     cublasdx::identity, Converter<TranslatedElement, Element>>;
+      constexpr TransformType transformOp{};
+      accGate.clear();
+      accUp.clear();
+      const int tilesK = K / bK;
+      const auto gA = tile::get<bM, bK, ar>(a, M, K, cute::select<0, 2>(tileCoord));
+      const auto gBg = tile::get<bK, bN, br>(bGate, K, N, cute::select<2, 1>(tileCoord));
+      const auto gBu = tile::get<bK, bN, br>(bUp, K, N, cute::select<2, 1>(tileCoord));
+      constexpr auto sASS = cublasdx::cosize(BLAS::suggest_layout_smem_a());
+      constexpr auto sBSS = cublasdx::cosize(BLAS::suggest_layout_smem_b());
+      auto* __restrict__ sAP = static_cast<Element*>(workspace);
+      auto* __restrict__ sBGP = sAP + (sASS * pipeStages);
+      auto* __restrict__ sBUP = sBGP + (sBSS * pipeStages);
+      auto sA = cublasdx::make_tensor(sAP, BLAS::suggest_layout_smem_a());
+      auto sBg = cublasdx::make_tensor(sBGP, BLAS::suggest_layout_smem_b());
+      auto sBu = cublasdx::make_tensor(sBUP, BLAS::suggest_layout_smem_b());
+      cute::for_each(cute::make_int_sequence<pipeStages>{}, [&](auto stage) {
+        update_buffer<stage, sASS>(sA, sAP);
+        update_buffer<stage, sBSS>(sBg, sBGP);
+        update_buffer<stage, sBSS>(sBu, sBUP);
+        cublasdx::copy<BLAS, aAlignment>(gA(cute::_, cute::_, stage), sA);
+        cublasdx::copy<BLAS, bAlignment>(gBg(cute::_, cute::_, stage), sBg);
+        cublasdx::copy<BLAS, bAlignment>(gBu(cute::_, cute::_, stage), sBu);
+        cpFence();
+      });
+      for (int kStage = pipeStages; kStage < tilesK; ++kStage) {
+        const int ps = kStage % pipeStages;
+        update_buffer<sASS>(sA, sAP, ps);
+        update_buffer<sBSS>(sBg, sBGP, ps);
+        update_buffer<sBSS>(sBu, sBUP, ps);
+        cpWait<pipeStages - 1>();
+        BLAS().execute(sA, sBg, accGate, transformOp, transformOp);
+        BLAS().execute(sA, sBu, accUp, transformOp, transformOp);
+        __syncthreads();
+        cublasdx::copy<BLAS, aAlignment>(gA(cute::_, cute::_, kStage), sA);
+        cublasdx::copy<BLAS, bAlignment>(gBg(cute::_, cute::_, kStage), sBg);
+        cublasdx::copy<BLAS, bAlignment>(gBu(cute::_, cute::_, kStage), sBu);
+        cpFence();
+      }
+      cute::for_each(cute::make_int_sequence<pipeStages>{}, [&](auto stage) {
+        const int ps = (tilesK + stage) % pipeStages;
+        update_buffer<sASS>(sA, sAP, ps);
+        update_buffer<sBSS>(sBg, sBGP, ps);
+        update_buffer<sBSS>(sBu, sBUP, ps);
+        cpWait<(pipeStages - 1) - stage>();
+        BLAS().execute(sA, sBg, accGate, transformOp, transformOp);
+        BLAS().execute(sA, sBu, accUp, transformOp, transformOp);
       });
     }
   };

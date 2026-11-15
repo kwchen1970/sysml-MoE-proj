@@ -194,4 +194,8 @@ Job **61350987**: builds and runs (no illegal address) with 64 KB reservation ke
 
 ## Closed: L2 persisting access policy on up-weights (slower)
 
-Job **61351763**: correct (error in band) but **anchor +7.8%**, mean **+6.8%** across 11 shapes. Marking the whole local up-weight span as persisting fights the streaming traffic the kernel still needs. Reverted. Tip of this branch is again BK64 + gateCache + single-expert affinity with no extra keep.
+Job **61351763**: correct (error in band) but **anchor +7.8%**, mean **+6.8%** across 11 shapes. Marking the whole local up-weight span as persisting fights the streaming traffic the kernel still needs. Reverted. Tip of `cursor/bk128-gated-stage-378d` is again BK64 + gateCache + single-expert affinity with no extra keep.
+
+## Next: shared-A gated GEMM0 (`cursor/shared-a-gated-378d`)
+
+Gate and up both read the same activation tile. `CollectiveMainloop::gated` loads A once per K-stage into smem and MMA’s against both B tiles. AB smem grows to `(bM+2*bN)` (~48 KB at BK64) plus gateCache (~32 KB) → ~80 KB; still targets 2 blocks/SM on A100. Compare against `testFlashMoE.bk64`.
