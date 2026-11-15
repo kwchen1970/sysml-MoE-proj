@@ -212,6 +212,23 @@ Job **61355082** (partial+): about **+8–11%** vs BK64 on every finished shape.
 
 Mean **−2.8%**, but **anchor +12.9%** (HYB 4.38 vs BK64 3.88). Shared-A at k=6 is the regression; k=2 mid-I shapes still win (E=16 −11.6%, I=1024 −13.4%).
 
-## Next: hybrid shared-A only for k≤2
+## Keep: hybrid shared-A for k≤2 (job 61356627)
 
-`I < 4096 && k <= 2`: shared-A `bN0=64`. Else BK64 two-pass `bN0=128` (covers the gated anchor).
+`I < 4096 && k <= 2`: shared-A at `bN0=64`. Else BK64 two-pass at `bN0=128`.
+
+Hardware: Perlmutter A100-SXM4-40GB. Interleaved A/B, ROUNDS=3, RUNS=16 vs `testFlashMoE.bk64`.
+
+| Shape | BK64 | HYB2 | Δ | Path |
+|---|---:|---:|---:|---|
+| **anchor S=4096 I=1408 E=16 k=6** | **4.156** | **4.366** | **+5.0%*** | BK64 |
+| S=4096 I=2048 E=32 k=2 | 2.058 | 1.762 | **−14.4%** | shared-A |
+| S=4096 I=2048 E=16 k=2 | 1.852 | 1.636 | **−11.7%** | shared-A |
+| S=1024 I=2048 E=32 k=2 | 1.044 | 0.952 | **−8.8%** | shared-A |
+| S=16384 I=2048 E=32 k=2 | 7.017 | 6.633 | **−5.5%** | shared-A |
+| S=4096 I=4096 E=32 k=2 | 3.448 | 3.090 | −10.4% | BK64† |
+| mean over 11 shapes | | | **−5.3%** | |
+
+\*Anchor stays on the BK64 path; A/B rounds were noisy (BK64 3.82/4.16/4.50). Smoke HYB2 anchor was 3.91 ms (bN=128).  
+†Same two-pass config as the BK64 binary; gap is likely binary skew/noise.
+
+Error stayed in band. Occupancy 2. This is the first keep past BK64 on the sweep (mean −5.3%, 9 wins / 2 losses).
