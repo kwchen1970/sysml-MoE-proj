@@ -368,8 +368,12 @@ void kickstart(const Options& opts) {
   using Config = flashmoe::moe::MoEConfig<Element, Arch, threads, cm, mt, GEMM0Tile, GEMM1Tile>;
 
   const auto roundEC = cute::ceil_div(opts.EC, bM) * bM;
-  constexpr auto GEMM0Sz = cutlass::round_up(cute::max(sizeof(Element) * bK0 * pSK0 * (bM + bN0),
-    sizeof(Element) * bM * bN0) + (mt == flashmoe::MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0),
+  using TileG0Host = flashmoe::tile::CollectiveMainloop<bM, bN0, bK0, Arch, Element, AccumType, threads, pSK0>;
+  constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
+    ? TileG0Host::SharedSizeABGated::value
+    : TileG0Host::SharedSizeAB::value;
+  constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
+    + (mt == flashmoe::MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0),
     flashmoe::MAX_ALIGNMENT);
   constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
     sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
@@ -788,81 +792,78 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // to minimize instantiated templates
-  // Ampere gated: narrow GEMM0 N so two float accumulators (shared-A gate+up)
-  // fit without spilling; GEMM1 stays wide. bN0=64 halves fragment size vs 128.
-  constexpr int bN0 = sizeof(Element) == 2
-    ? (mt == flashmoe::MLPMatmulType::gated && arch >= 800 ? 64 : 128)
-    : 64; // 144 for gpt-oss
+  // Ampere gated: I<4096 uses shared-A at bN0=64; larger I keeps BK64 two-pass
+  // at bN0=128 (shared-A dual-accum spills there; narrow-N alone is slower).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
-  // Ampere gated: bK=64 / pS=1; shared-A gated mainloop (see tile.cuh).
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
+  constexpr auto pS = arch >= 900 ? 3 : arch >= 800
+    ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
+    : 1;
+  constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
+  static_assert(bM >= 1);
   if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
     throw std::invalid_argument("H is invalid");
   }
-  if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
-    throw std::invalid_argument("I is invalid");
-  }
-  constexpr auto pS = arch >= 900 ? 3 : arch >= 800
-    ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
-    : 1; // Hopper 3; Ampere gated uses one stage with bK=64
-  constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128; // hopper, S >= 4096 -> bM = 256
-  static_assert(bM >= 1);
   if (S < 1 || (S > bM && S % bM != 0)) {
     throw std::invalid_argument("S is invalid for this benchmark");
   }
   if (E != 8 && E != 16 && E != 32 && E % 32 != 0) {
     throw std::invalid_argument("E must be 8, 16, 32, or a multiple of 32 for this benchmark");
   }
-  switch (E) {
-    // Any E, where E % world == 0 holds, is supported, we restrict to 8 here to minimize compilation times.
-    case 8: {
-      if (k > 1) {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
-        flashmoe::GateReductionLevel::singleBlock, 8>(opts);
-      }
-      else {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
-        flashmoe::GateReductionLevel::singleBlock, 8>(opts);
-      }
+  const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
+    && I < 4096);
+  auto launch = [&](auto bN0C) {
+    constexpr int bN0 = decltype(bN0C)::value;
+    if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
+      throw std::invalid_argument("I is invalid");
     }
-      break;
-    case 16: {
-      if (k > 1) {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
-        flashmoe::GateReductionLevel::singleBlock, 16>(opts);
-      }
-      else {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
-        flashmoe::GateReductionLevel::singleBlock, 16>(opts);
-      }
-    }
-      break;
-    case 32: {
-      if (k > 1) {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
-        flashmoe::GateReductionLevel::singleBlock, 32>(opts);
-      }
-      else {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
-        flashmoe::GateReductionLevel::singleBlock, 32>(opts);
-      }
-    }
-    break;
-    default: {
-      if (E % 32 == 0) {
+    switch (E) {
+      case 8:
         if (k > 1) {
           kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
-          flashmoe::GateReductionLevel::multiBlock, 32>(opts);
-        }
-        else {
+          flashmoe::GateReductionLevel::singleBlock, 8>(opts);
+        } else {
           kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
-          flashmoe::GateReductionLevel::multiBlock, 32>(opts);
+          flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         }
-      }
+        break;
+      case 16:
+        if (k > 1) {
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          flashmoe::GateReductionLevel::singleBlock, 16>(opts);
+        } else {
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          flashmoe::GateReductionLevel::singleBlock, 16>(opts);
+        }
+        break;
+      case 32:
+        if (k > 1) {
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          flashmoe::GateReductionLevel::singleBlock, 32>(opts);
+        } else {
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          flashmoe::GateReductionLevel::singleBlock, 32>(opts);
+        }
+        break;
+      default:
+        if (E % 32 == 0) {
+          if (k > 1) {
+            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+            flashmoe::GateReductionLevel::multiBlock, 32>(opts);
+          } else {
+            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+            flashmoe::GateReductionLevel::multiBlock, 32>(opts);
+          }
+        }
+        break;
     }
+  };
+  if (useSharedA) {
+    launch(cute::Int<64>{});
+  } else {
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{});
   }
 }
 

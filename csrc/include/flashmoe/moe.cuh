@@ -77,8 +77,14 @@ namespace flashmoe::moe
     using Element = Config::DType;
 
     constexpr int bM = bM0;
-    constexpr auto GEMM0Sz = cutlass::round_up(cute::max(sizeof(Element) * bK0 * pSK0 * (bM + bN0),
-    sizeof(Element) * bM * bN0) + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
+    using TileG0 = tile::CollectiveMainloop<bM0, bN0, bK0, Config::Arch::value, Element,
+      typename Config::AccumType, threads, pSK0>;
+    // Shared-A only for narrow GEMM0 (bN0<=64); wide tiles stay two-pass.
+    constexpr auto gemm0AB = (mt == MLPMatmulType::gated && bN0 <= 64)
+      ? TileG0::SharedSizeABGated::value
+      : TileG0::SharedSizeAB::value;
+    constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
+      + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
       sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));

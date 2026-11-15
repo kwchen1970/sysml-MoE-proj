@@ -204,6 +204,10 @@ Job **61353689**: error in band, but **anchor ~+45–60%** (6.30 vs ~4.0 ms). Tw
 
 Correct (error ~0.06%). Mean **−2.9%** / median **−3.4%** over 11 shapes, but the gated **anchor is flat** (−0.1%); clean BK64 rounds (~3.85) beat SH64 (~4.05). Wins on E=8/16 and I=1024; loss on I=4096 (+11%). Not a clean anchor ship.
 
-## Next: isolate GEMM0 bN=64 two-pass (no shared-A)
+## Closed: GEMM0 bN=64 two-pass alone (slower)
 
-Drop shared-A; keep `bN0=64` / `bN1=128` / two-pass gateCache. Separates the narrow-N effect from dual-accumulator shared-A.
+Job **61355082** (partial+): about **+8–11%** vs BK64 on every finished shape. Narrow-N without shared-A is a loss; the SH64 mean win was from shared-A.
+
+## Next: hybrid shared-A
+
+`I < 4096`: shared-A at `bN0=64`. `I >= 4096`: BK64 two-pass at `bN0=128`. Keeps SH64 wins on the mid-I sweep and BK64 on wide-I shapes that regressed.

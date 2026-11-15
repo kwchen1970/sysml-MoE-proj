@@ -86,51 +86,86 @@ namespace flashmoe::processor
             const typename TileGEMM::AccumType& swishAlpha,
             const typename TileGEMM::AccumType& swishBeta,
             const int& M, const int& N, const int& K, const int& tileIdx) {
-    // Isolate bN0=64: classic two-pass with gateCache (no shared-A).
-    auto* __restrict__ gateCache = workspace + cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
-        TileGEMM::SharedSizeAB::value), TileGEMM::GeneralAlignment::value);
     using BLAS = TileGEMM::BLAS;
-    auto accumulator = BLAS::suggest_accumulator();
     using BM = cute::Int<cublasdx::size_of<BLAS>::m>;
     using BN = cute::Int<cublasdx::size_of<BLAS>::n>;
+    constexpr Activation act{};
+    constexpr Converter<typename TileGEMM::AccumType, ElementC> loadConv{};
+    constexpr Converter<ElementC, typename TileGEMM::AccumType> storeConv{};
     const auto tileCoord = tile::idx2Coord(M / BM{}, N / BN{}, tileIdx);
     constexpr TileGEMM tileMainloop{};
-    tileMainloop(workspace, a, b, accumulator, M, N, K, tileCoord);
-    __syncthreads();
-    const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
-    auto d_frag = cublasdx::make_fragment_like<ElementC>(accumulator.get_results());
-    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accumulator);
-    constexpr Activation act{};
-    using AccumType = decltype(accumulator)::value_type;
-    static_assert(cuda::std::is_same_v<AccumType, typename TileGEMM::AccumType>);
-    constexpr Converter<AccumType, ElementC> loadConv{};
-    constexpr Converter<ElementC, AccumType> storeConv{};
-    const auto c_frag = accumulator.get_results();
-    constexpr int accum_size = cublasdx::size(c_frag);
-    cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
-      const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
-      d_frag(i) = storeConv(swishAlpha * act(g));
-    });
-    auto sGate = cublasdx::make_tensor(reinterpret_cast<ElementC*>(gateCache), BLAS::suggest_layout_smem_c());
-    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sGate, accumulator);
-    tileMainloop(workspace, a, bV, accumulator, M, N, K, tileCoord);
-    auto cv_frag = accumulator.get_results();
-    const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
-    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accumulator);
-    cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
-      cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
-    });
-    __syncthreads();
-    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sGate, d_frag, accumulator);
-    cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
-      d_frag(i) = storeConv(cv_frag(i) * loadConv(d_frag(i)));
-    });
-    auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
-    auto sC = cublasdx::make_tensor(reinterpret_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
-    __syncthreads();
-    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
-    __syncthreads();
-    cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
+    // bN<=64: shared-A (two accumulators fit). Wider tiles: classic two-pass.
+    if constexpr (BN{} <= 64) {
+      auto* __restrict__ gateCache = workspace + cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
+          TileGEMM::SharedSizeABGated::value), TileGEMM::GeneralAlignment::value);
+      auto accGate = BLAS::suggest_accumulator();
+      auto accUp = BLAS::suggest_accumulator();
+      tileMainloop.gated(workspace, a, b, bV, accGate, accUp, M, N, K, tileCoord);
+      __syncthreads();
+      const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
+      auto d_frag = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accGate);
+      const auto c_frag = accGate.get_results();
+      constexpr int accum_size = cublasdx::size(c_frag);
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
+        d_frag(i) = storeConv(swishAlpha * act(g));
+      });
+      auto sGate = cublasdx::make_tensor(reinterpret_cast<ElementC*>(gateCache), BLAS::suggest_layout_smem_c());
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sGate, accGate);
+      auto cv_frag = accUp.get_results();
+      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accUp);
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
+      });
+      __syncthreads();
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sGate, d_frag, accUp);
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        d_frag(i) = storeConv(cv_frag(i) * loadConv(d_frag(i)));
+      });
+      auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
+      auto sC = cublasdx::make_tensor(reinterpret_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
+      __syncthreads();
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accUp);
+      __syncthreads();
+      cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
+    } else {
+      auto* __restrict__ gateCache = workspace + cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
+          TileGEMM::SharedSizeAB::value), TileGEMM::GeneralAlignment::value);
+      auto accumulator = BLAS::suggest_accumulator();
+      tileMainloop(workspace, a, b, accumulator, M, N, K, tileCoord);
+      __syncthreads();
+      const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
+      auto d_frag = cublasdx::make_fragment_like<ElementC>(accumulator.get_results());
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accumulator);
+      const auto c_frag = accumulator.get_results();
+      constexpr int accum_size = cublasdx::size(c_frag);
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
+        d_frag(i) = storeConv(swishAlpha * act(g));
+      });
+      auto sGate = cublasdx::make_tensor(reinterpret_cast<ElementC*>(gateCache), BLAS::suggest_layout_smem_c());
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sGate, accumulator);
+      tileMainloop(workspace, a, bV, accumulator, M, N, K, tileCoord);
+      auto cv_frag = accumulator.get_results();
+      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accumulator);
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
+      });
+      __syncthreads();
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sGate, d_frag, accumulator);
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        d_frag(i) = storeConv(cv_frag(i) * loadConv(d_frag(i)));
+      });
+      auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
+      auto sC = cublasdx::make_tensor(reinterpret_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
+      __syncthreads();
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
+      __syncthreads();
+      cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
+    }
   }
 
   struct ProcessorArgs {
