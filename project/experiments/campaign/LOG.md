@@ -188,6 +188,6 @@ Job **61350226**: smoke OK, error in band. Mean −0.9% / median −1.7% over 11
 
 Job **61350550**: smoke OK, but **anchor +16.4%** (4.50 vs 3.87 ms) with tight BK64 rounds. Some k=2 shapes improved; gated k=6 is GEMM0-bound. Reverted to symmetric BK64.
 
-## Next: re-test gmem staging alone on clean BK64
+## Closed: gmem staging alone on clean BK64 (numerically wrong)
 
-Earlier “gmem with surcharge kept” (61347583) was on the mixed tree. Job next: stage gate through gmem, keep 64 KB GEMM0 reservation, `bK=64/pS=1` — isolates staging from smem spends.
+Job **61350987**: builds and runs (no illegal address) with 64 KB reservation kept, but **error ~85–95%** on every A/B shape. Smoke exit code was 0 only because the harness does not fail on high error. Staging through the output tile is incorrect on BK64; restored gateCache. The path is closed until the round-trip copy is fixed.

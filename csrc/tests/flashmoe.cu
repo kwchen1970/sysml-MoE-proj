@@ -806,8 +806,6 @@ void drive(const int argc, char** argv) {
   constexpr auto pS = arch >= 900 ? 3 : arch >= 800
     ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1; // Hopper 3; Ampere gated uses one stage with bK=64
-  constexpr auto pS0 = pS;
-  constexpr auto pS1 = pS;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128; // hopper, S >= 4096 -> bM = 256
   static_assert(bM >= 1);
   if (S < 1 || (S > bM && S % bM != 0)) {
@@ -820,33 +818,33 @@ void drive(const int argc, char** argv) {
     // Any E, where E % world == 0 holds, is supported, we restrict to 8 here to minimize compilation times.
     case 8: {
       if (k > 1) {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
         flashmoe::GateReductionLevel::singleBlock, 8>(opts);
       }
       else {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
         flashmoe::GateReductionLevel::singleBlock, 8>(opts);
       }
     }
       break;
     case 16: {
       if (k > 1) {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
         flashmoe::GateReductionLevel::singleBlock, 16>(opts);
       }
       else {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
         flashmoe::GateReductionLevel::singleBlock, 16>(opts);
       }
     }
       break;
     case 32: {
       if (k > 1) {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
         flashmoe::GateReductionLevel::singleBlock, 32>(opts);
       }
       else {
-        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+        kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
         flashmoe::GateReductionLevel::singleBlock, 32>(opts);
       }
     }
@@ -854,11 +852,11 @@ void drive(const int argc, char** argv) {
     default: {
       if (E % 32 == 0) {
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::multiBlock, 32>(opts);
         }
         else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::multiBlock, 32>(opts);
         }
       }
