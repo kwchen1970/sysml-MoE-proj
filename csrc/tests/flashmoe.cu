@@ -369,11 +369,9 @@ void kickstart(const Options& opts) {
 
   const auto roundEC = cute::ceil_div(opts.EC, bM) * bM;
   using TileG0Host = flashmoe::tile::CollectiveMainloop<bM, bN0, bK0, Arch, Element, AccumType, threads, pSK0>;
-  constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 == 32)
-    ? TileG0Host::SharedSizeABGated2::value
-    : (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
-      ? TileG0Host::SharedSizeABGated::value
-      : TileG0Host::SharedSizeAB::value;
+  constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
+    ? TileG0Host::SharedSizeABGated::value
+    : TileG0Host::SharedSizeAB::value;
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
     + (mt == flashmoe::MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0),
     flashmoe::MAX_ALIGNMENT);
@@ -794,8 +792,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB9: dual-N shared-A at bN0=32 (paired tiles, A reused per K)
-  // when I<4096 && k<=2 && I%64==0; else BK64 two-pass bN0=128.
+  // Ampere gated HYB10: HYB2 shared-A at bN0=64 for I<4096 && k<=2, plus
+  // register-resident silu(gate) (AccumType) — smem budget unchanged vs HYB2.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -814,9 +812,9 @@ void drive(const int argc, char** argv) {
   if (E != 8 && E != 16 && E != 32 && E % 32 != 0) {
     throw std::invalid_argument("E must be 8, 16, 32, or a multiple of 32 for this benchmark");
   }
-  // Dual-N needs even number of bN=32 tiles along I (I multiple of 64).
+  // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
-    && I < 4096 && k <= 2 && (I % 64 == 0));
+    && I < 4096 && k <= 2);
   auto launch = [&](auto bN0C) {
     constexpr int bN0 = decltype(bN0C)::value;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
@@ -864,7 +862,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<32>{});
+    launch(cute::Int<64>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{});
   }

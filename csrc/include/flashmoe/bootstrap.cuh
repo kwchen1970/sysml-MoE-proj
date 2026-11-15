@@ -221,8 +221,7 @@ namespace flashmoe {
     }
     const auto roundEC = cute::ceil_div(args.EC, args.bM) * args.bM;
     const auto ecTilesM = cute::ceil_div(roundEC, args.bM);
-    const auto tilesN0 = cute::ceil_div(args.ffnIntermediateSize, args.bN0)
-      / (args.bN0 == 32 ? 2 : 1);
+    const auto tilesN0 = cute::ceil_div(args.ffnIntermediateSize, args.bN0);
     const auto tilesN1 = cute::ceil_div(args.tokenDim, args.bN1);
 
     if (nvshmemx_init_status() == NVSHMEM_STATUS_NOT_INITIALIZED) {
@@ -378,9 +377,7 @@ namespace flashmoe {
   __host__ __forceinline__ size_t getWorkspaceBytes(const MoEArgs &args) {
     const auto roundEC = cute::ceil_div(args.EC, args.bM) * args.bM;
     const auto ecTilesM = cute::ceil_div(roundEC, args.bM);
-    // bN0==32 ⇒ dual-N pairing (see processor fGET_gated); queue length uses pairs.
-    const auto tilesN0 = cute::ceil_div(args.ffnIntermediateSize, args.bN0)
-      / (args.bN0 == 32 ? 2 : 1);
+    const auto tilesN0 = cute::ceil_div(args.ffnIntermediateSize, args.bN0);
     const auto tilesN1 = cute::ceil_div(args.tokenDim, args.bN1);
     const auto subscriberCount = args.threads - WARP_SIZE;
     const auto processors = args.blocks - 1;
