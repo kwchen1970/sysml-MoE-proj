@@ -176,6 +176,10 @@ Job **61349613** (clean sync): exclusive `narrowToLongPole` vs BK64, interleaved
 
 Anchor is inside noise; most shapes are flat-to-slower. Restored single-expert affinity. Same conclusion as the pre-BK64 exclusive trial.
 
-## Next: re-test gmem staging + bK=64/pS=2 on clean sync
+## Closed: gmem staging + bK=64/pS=2 on clean sync (still illegal address)
 
-Earlier illegal-address results for gmem/pS=2 were taken on the mixed tree. Job **61349915** rebuilds after the full sync: gate through gmem (drop 32 KB surcharge) + Ampere `pS=2` at `bK=64`, vs `testFlashMoE.bk64`.
+Job **61349915** after a full `flashmoe/` sync: smoke and every A/B shape illegal-addressed; BK64 binary stayed clean. Confirms the earlier crash was real, not a mixed-tree artifact. Reverted to gateCache + Ampere gated `bK=64/pS=1`.
+
+## Next: asymmetric GEMM1 pipeline on BK64
+
+GateCache only taxes GEMM0. Kernel smem is `max(GEMM0, GEMM1)`, so Ampere gated can keep GEMM0 at `bK=64/pS=1` (64 KB with gate) and raise GEMM1 to `pS=2` (also 64 KB AB) without growing the footprint or touching the broken gmem path.

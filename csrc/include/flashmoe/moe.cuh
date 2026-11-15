@@ -71,14 +71,14 @@ namespace flashmoe::moe
     constexpr int bK1 = cute::get<2>(typename Config::G1TS{});
     constexpr int pSK1 = cute::get<3>(typename Config::G1TS{});
     constexpr int threads = Config::Threads::value;
+    constexpr auto mt = Config::MT::value;
     static_assert(bM0 == bM1);
 
     using Element = Config::DType;
 
     constexpr int bM = bM0;
-    // Gate staged through gmem — no second C tile in smem.
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(sizeof(Element) * bK0 * pSK0 * (bM + bN0),
-    sizeof(Element) * bM * bN0), MAX_ALIGNMENT);
+    sizeof(Element) * bM * bN0) + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
       sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
