@@ -200,6 +200,10 @@ Job **61351763**: correct (error in band) but **anchor +7.8%**, mean **+6.8%** a
 
 Job **61353689**: error in band, but **anchor ~+45–60%** (6.30 vs ~4.0 ms). Two live float accumulators at bN=128 spill hard. Keep the `gated` mainloop; cut GEMM0 `bN` to 64 so both fragments fit.
 
-## Next: shared-A + GEMM0 bN=64
+## Mixed: shared-A + GEMM0 bN=64 (job 61354062)
 
-Same shared-A path, `bN0=64` / `bN1=128` / `bK=64` / `pS=1`. AB+gate smem drops (~48 KB). Compare against `testFlashMoE.bk64`.
+Correct (error ~0.06%). Mean **−2.9%** / median **−3.4%** over 11 shapes, but the gated **anchor is flat** (−0.1%); clean BK64 rounds (~3.85) beat SH64 (~4.05). Wins on E=8/16 and I=1024; loss on I=4096 (+11%). Not a clean anchor ship.
+
+## Next: isolate GEMM0 bN=64 two-pass (no shared-A)
+
+Drop shared-A; keep `bN0=64` / `bN1=128` / two-pass gateCache. Separates the narrow-N effect from dual-accumulator shared-A.
