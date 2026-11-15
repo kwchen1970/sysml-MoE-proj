@@ -142,4 +142,12 @@ Tried spending the freed budget on larger tiles first:
 
 Pivot to the resident-warps combo on top of BK64: gmem staging + `__launch_bounds__(threads, 3)` + `PROCESSOR_STATE_SIZE=12` (384 processors). Target occupancy 3 blocks/SM. Compare against the BK64 binary (occupancy 2) with the interleaved A/B harness. Prior resident-warps on bK=32 was mixed; re-check with bK=64.
 
-Perlmutter job **61296242** submitted. Fetch blocked after NERSC sshproxy cert expired (valid to 2026-11-14 16:57 America/New_York); renew with `sshproxy -u rmf253 -o nersc -a -f` then pull `ab/occ3-61296242.out`.
+Perlmutter job **61296242** (OCC3): illegal address on every shape — same failure mode. Closed.
+
+## Closed: gmem gate staging under BK64 (illegal address)
+
+All three spends of the freed 32 KB crashed (`cudaErrorIllegalAddress`): bK=128, bK=64/pS=2, and OCC3 (bK=64/pS=1 + launch_bounds=3). Reverted processor/moe/constants to the BK64 gateCache baseline.
+
+## Next: diagnose staging vs smem undersize
+
+Re-apply gmem staging in `processor.cuh` only, while **keeping** the 64 KB GEMM0 reservation (gated surcharge still in `moe.cuh`). If that runs clean, prior crashes were undersized dynamic smem / C-layout overflow; then size correctly and retry pS=2. If it still crashes, the staging sequence itself is wrong on this tree.
