@@ -160,8 +160,22 @@ Job **61348254**: smoke illegal-addressed. Forcing minBlocks=2 on this 255-reg k
 
 Job **61348777**: illegal address on every A/B shape (smoke RC was a false positive from a script bug). Likely cublasdx smem layout cosize exceeds the formula for pS=2 at this tile. Reverted tile config to BK64.
 
-## Next: exclusive affinity on top of BK64
+## Closed: exclusive affinity on top of BK64 (flat)
 
-`narrowToLongPole` always clears `hot1` (never keep a partner). Prior campaign measured ~0.5% at the anchor before BK64; re-check interleaved against the BK64 binary. Scheduler-only — no tile/smem change.
+**Note:** Perlmutter `moe-exp/repo` was on `further-benchmarking` with a local bundle remote; partial rsyncs mixed BK64 `flashmoe.cu` onto an incompatible scheduler/os/tq tree and produced false illegal-address failures for every rebuild (jobs 61347583–61349233). Cleared by a full `csrc/include/flashmoe/` sync.
 
-**Note:** Perlmutter `moe-exp/repo` was on `further-benchmarking` with a local bundle remote; partial rsyncs mixed BK64 `flashmoe.cu` onto an incompatible scheduler/os/tq tree and produced false illegal-address failures for every rebuild (jobs 61347583–61349233). Job **61349613** rebuilds after a full `csrc/include/flashmoe/` sync from `cursor/bk128-gated-stage-378d`.
+Job **61349613** (clean sync): exclusive `narrowToLongPole` vs BK64, interleaved A/B, ROUNDS=3 RUNS=16.
+
+| Shape | BK64 | EXCL | Δ |
+|---|---:|---:|---:|
+| **anchor** | **3.780** | **3.751** | **−0.78%** |
+| S=16384 | 6.898 | 6.568 | −4.8% |
+| S=8192 | 3.398 | 3.513 | +3.4% |
+| E=8 | 1.722 | 1.780 | +3.4% |
+| mean over 11 shapes | | | **+0.63%** |
+
+Anchor is inside noise; most shapes are flat-to-slower. Restored single-expert affinity. Same conclusion as the pre-BK64 exclusive trial.
+
+## Next: re-test gmem staging + bK=64/pS=2 on clean sync
+
+Earlier illegal-address results for gmem/pS=2 were taken on the mixed tree. Job **61349915** rebuilds after the full sync: gate through gmem (drop 32 KB surcharge) + Ampere `pS=2` at `bK=64`, vs `testFlashMoE.bk64`.
