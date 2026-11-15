@@ -192,6 +192,6 @@ Job **61350550**: smoke OK, but **anchor +16.4%** (4.50 vs 3.87 ms) with tight B
 
 Job **61350987**: builds and runs (no illegal address) with 64 KB reservation kept, but **error ~85–95%** on every A/B shape (smoke itself was 91.8%). Staging through the output tile is incorrect on BK64; restored gateCache. The path is closed until the round-trip copy is fixed.
 
-## Next: L2 persisting access policy on expert up-weights
+## Closed: L2 persisting access policy on up-weights (slower)
 
-Host-side `cudaStreamAttributeAccessPolicyWindow` over local up-weights plus `cudaLimitPersistingL2CacheSize`, on top of BK64 + single-expert affinity. No tile change.
+Job **61351763**: correct (error in band) but **anchor +7.8%**, mean **+6.8%** across 11 shapes. Marking the whole local up-weight span as persisting fights the streaming traffic the kernel still needs. Reverted. Tip of this branch is again BK64 + gateCache + single-expert affinity with no extra keep.
