@@ -151,12 +151,9 @@ namespace flashmoe::processor
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
         d_frag(i) = storeConv(cv_frag(i) * loadConv(d_frag(i)));
       });
+      // Direct rmem->gmem on two-pass path as well (same as shared-A / gemmMNK).
       auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
-      auto sC = cublasdx::make_tensor(reinterpret_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
-      __syncthreads();
-      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
-      __syncthreads();
-      cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, gC, accumulator);
     }
   }
 
