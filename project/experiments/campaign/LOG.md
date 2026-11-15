@@ -190,4 +190,8 @@ Job **61350550**: smoke OK, but **anchor +16.4%** (4.50 vs 3.87 ms) with tight B
 
 ## Closed: gmem staging alone on clean BK64 (numerically wrong)
 
-Job **61350987**: builds and runs (no illegal address) with 64 KB reservation kept, but **error ~85–95%** on every A/B shape. Smoke exit code was 0 only because the harness does not fail on high error. Staging through the output tile is incorrect on BK64; restored gateCache. The path is closed until the round-trip copy is fixed.
+Job **61350987**: builds and runs (no illegal address) with 64 KB reservation kept, but **error ~85–95%** on every A/B shape (smoke itself was 91.8%). Staging through the output tile is incorrect on BK64; restored gateCache. The path is closed until the round-trip copy is fixed.
+
+## Next: L2 persisting access policy on expert up-weights
+
+Host-side `cudaStreamAttributeAccessPolicyWindow` over local up-weights plus `cudaLimitPersistingL2CacheSize`, on top of BK64 + single-expert affinity. No tile change.

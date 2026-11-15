@@ -258,6 +258,29 @@ namespace flashmoe::moe
     if constexpr (Config::CM::value == CombineMode::plural) {
       cudaMemsetAsync(kArgs.moeOut, 0, sizeof(typename Config::DType) * kArgs.S * static_cast<size_t>(kArgs.H), stream);
     }
+    // Prefer expert up-weights in the persisting L2 carve-out when the device
+    // exposes one. Single-expert affinity already concentrates reuse; this
+    // marks the weight working set so hits stay resident across CTA waves.
+#if defined(CUDART_VERSION) && (CUDART_VERSION >= 11040)
+    {
+      int maxPersist = 0;
+      if (cudaDeviceGetAttribute(&maxPersist, cudaDevAttrMaxPersistingL2CacheSize, 0) == cudaSuccess
+          && maxPersist > 0) {
+        size_t carve = static_cast<size_t>(maxPersist);
+        cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, carve);
+        const size_t upBytes = sizeof(typename Config::DType) * static_cast<size_t>(kArgs.H) * kArgs.I
+          * static_cast<size_t>(ctx.nLx);
+        // Window covers as many up-weight bytes as fit in the carve-out.
+        cudaStreamAttrValue policy{};
+        policy.accessPolicyWindow.base_ptr = const_cast<cuda::std::byte*>(kArgs.expertUpWeights);
+        policy.accessPolicyWindow.num_bytes = upBytes < carve ? upBytes : carve;
+        policy.accessPolicyWindow.hitRatio = 1.0f;
+        policy.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
+        policy.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
+        cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow, &policy);
+      }
+    }
+#endif
     forward<Config, a, topo><<<ctx.blocks, Config::Threads::value, ctx.smemSize, stream>>>(kArgs, ctx);
   }
 }
