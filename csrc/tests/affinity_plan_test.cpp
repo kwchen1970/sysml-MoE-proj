@@ -131,10 +131,10 @@ static void testNarrowToLongPole() {
   unsigned hot0 = 0;
   unsigned hot1 = 1;
   narrowToLongPole(hist, hot0, hot1, 32);
-  expect(hot1 == kNoExpert, "exclusive affinity always drops the partner");
+  expect(hot1 == kNoExpert, "a long pole that fills the CTAs drops its partner");
   hot1 = 1;
   narrowToLongPole(hist, hot0, hot1, 48);
-  expect(hot1 == kNoExpert, "exclusive affinity drops the partner even when short");
+  expect(hot1 == 1, "a long pole that cannot fill the CTAs keeps its partner");
 }
 
 int main() {

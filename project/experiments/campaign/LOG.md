@@ -163,3 +163,5 @@ Job **61348777**: illegal address on every A/B shape (smoke RC was a false posit
 ## Next: exclusive affinity on top of BK64
 
 `narrowToLongPole` always clears `hot1` (never keep a partner). Prior campaign measured ~0.5% at the anchor before BK64; re-check interleaved against the BK64 binary. Scheduler-only — no tile/smem change.
+
+**Note:** Perlmutter `moe-exp/repo` was on `further-benchmarking` with a local bundle remote; partial rsyncs mixed BK64 `flashmoe.cu` onto an incompatible scheduler/os/tq tree and produced false illegal-address failures for every rebuild (jobs 61347583–61349233). Job **61349613** rebuilds after a full `csrc/include/flashmoe/` sync from `cursor/bk128-gated-stage-378d`.

@@ -369,8 +369,7 @@ void kickstart(const Options& opts) {
 
   const auto roundEC = cute::ceil_div(opts.EC, bM) * bM;
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(sizeof(Element) * bK0 * pSK0 * (bM + bN0),
-    sizeof(Element) * bM * bN0) + (mt == flashmoe::MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0),
-    flashmoe::MAX_ALIGNMENT);
+    sizeof(Element) * bM * bN0), flashmoe::MAX_ALIGNMENT);
   constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
     sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
 
@@ -791,9 +790,10 @@ void drive(const int argc, char** argv) {
   // to minimize instantiated templates
   constexpr int bN0 = sizeof(Element) == 2 ? 128 : 64; // 144 for gpt-oss
   constexpr int bN1 = bN0;
-  // Ampere gated: bK=64 with one K-stage keeps AB smem at 32 KB (same as
-  // bK=32/pS=2) but halves K-loop trips. Campaign notes with single-expert
-  // affinity measured about 3.81 ms at the anchor vs ~3.92 ms at bK=32/pS=2.
+  // Ampere gated: stage gate via gmem (no second C tile), spend the 32 KB on
+  // bK=64/pS=2 so AB is 64 KB with compute/copy overlap. Re-test on a fully
+  // synced Perlmutter tree (earlier illegal-address results were from a mixed
+  // further-benchmarking checkout).
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
@@ -803,9 +803,8 @@ void drive(const int argc, char** argv) {
   if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
     throw std::invalid_argument("I is invalid");
   }
-  constexpr auto pS = arch >= 900 ? 3 : arch >= 800
-    ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
-    : 1; // Hopper 3; Ampere gated uses one stage with bK=64
+  constexpr auto pS = arch >= 900 ? 3 : arch >= 800 ? 2
+    : 1; // Hopper 3; Ampere gated: two stages at bK=64 after gmem staging
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128; // hopper, S >= 4096 -> bM = 256
   static_assert(bM >= 1);
   if (S < 1 || (S > bM && S % bM != 0)) {

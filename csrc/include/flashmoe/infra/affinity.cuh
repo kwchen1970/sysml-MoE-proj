@@ -67,13 +67,10 @@ FLASHMOE_HD bool isHotExpert(unsigned expert, unsigned hot0, unsigned hot1) {
 
 // Two gated experts of this size already fill a 40 MB L2. When the longer
 // expert alone can occupy every free CTA, drop the partner.
-// Exclusive: never keep a second hot expert. The partner is only filler
-// historically; campaign measured ~0.5% at the anchor. Re-check on top of BK64.
 FLASHMOE_HD void narrowToLongPole(const unsigned* hist, unsigned hot0, unsigned& hot1, unsigned slots) {
-  (void)hist;
-  (void)hot0;
-  (void)slots;
-  hot1 = kNoExpert;
+  if (hot0 != kNoExpert && slots > 0 && hist[hot0] >= slots) {
+    hot1 = kNoExpert;
+  }
 }
 
 // Prefix-clamp lane totals so the warp issues at most `slots` tasks.
