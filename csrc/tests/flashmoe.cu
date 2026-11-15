@@ -792,8 +792,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB11: HYB2 shared-A at bN0=64 for I<4096 && k<=2, plus
-  // register-resident silu(gate) and direct rmem->gmem C store (skip sC).
+  // Ampere gated HYB11b: HYB2 shared-A at bN0=64 for I<4096 && k<=2;
+  // ElementC register-resident silu(gate) + direct rmem->gmem C store.
+  // (HYB10 AccumType gate was ~2% wrong vs reference.)
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;

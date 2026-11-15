@@ -94,8 +94,8 @@ namespace flashmoe::processor
     constexpr Converter<ElementC, typename TileGEMM::AccumType> storeConv{};
     const auto tileCoord = tile::idx2Coord(M / BM{}, N / BN{}, tileIdx);
     constexpr TileGEMM tileMainloop{};
-    // bN<=64: shared-A. Keep silu(gate) in AccumType registers (no gateCache
-    // round-trip). SMEM sizing still reserves the C slab so occupancy matches HYB2.
+    // bN<=64: shared-A. Keep silu(gate) in an ElementC register fragment (same
+    // quant as gateCache) and write C with direct rmem->gmem. SMEM sizing unchanged.
     if constexpr (BN{} <= 64) {
       auto accGate = BLAS::suggest_accumulator();
       auto accUp = BLAS::suggest_accumulator();
@@ -103,15 +103,13 @@ namespace flashmoe::processor
       __syncthreads();
       const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
       auto d_frag = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
-      // AccumType fragment: avoids ElementC store/load through smem (HYB4 crash was
-      // from shrinking SMEM + dropping syncs; keep both here).
-      auto gate_act = cublasdx::make_fragment_like(accGate.get_results());
+      auto gate_act = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accGate);
       const auto c_frag = accGate.get_results();
       constexpr int accum_size = cublasdx::size(c_frag);
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
         const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
-        gate_act(i) = swishAlpha * act(g);
+        gate_act(i) = storeConv(swishAlpha * act(g));
       });
       auto cv_frag = accUp.get_results();
       const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
@@ -120,9 +118,8 @@ namespace flashmoe::processor
         cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
       });
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
-        d_frag(i) = storeConv(cv_frag(i) * gate_act(i));
+        d_frag(i) = storeConv(cv_frag(i) * loadConv(gate_act(i)));
       });
-      // Direct rmem->gmem (same pattern as gemmMNK.cu); skip sC smem bounce.
       auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, gC, accUp);
     } else {
