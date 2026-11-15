@@ -5,9 +5,10 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO_ROOT=$(cd "${SCRIPT_DIR}/../.." && pwd)
+# This file lives in project/scripts/benchmark_confirmation/ → repo root is ../../..
+REPO_ROOT=$(cd "${SCRIPT_DIR}/../../.." && pwd)
 # shellcheck disable=SC1091
-source "${SCRIPT_DIR}/env.sh"
+source "${SCRIPT_DIR}/../env.sh"
 "${SCRIPT_DIR}/fetch_mathdx.sh"
 
 if [[ ! -x "${CUDA_HOME}/bin/nvcc" ]]; then
