@@ -793,11 +793,13 @@ void drive(const int argc, char** argv) {
     throw std::invalid_argument("k must be <= E");
   }
   // to minimize instantiated templates
-  constexpr int bN0 = sizeof(Element) == 2 ? 128 : 64; // 144 for gpt-oss
-  constexpr int bN1 = bN0;
-  // Ampere gated: bK=64 with one K-stage keeps AB smem at 32 KB (same as
-  // bK=32/pS=2) but halves K-loop trips. Asymmetric GEMM1 pS=2 and bK=128
-  // were measured and not kept (see campaign LOG).
+  // Ampere gated: narrow GEMM0 N so two float accumulators (shared-A gate+up)
+  // fit without spilling; GEMM1 stays wide. bN0=64 halves fragment size vs 128.
+  constexpr int bN0 = sizeof(Element) == 2
+    ? (mt == flashmoe::MLPMatmulType::gated && arch >= 800 ? 64 : 128)
+    : 64; // 144 for gpt-oss
+  constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
+  // Ampere gated: bK=64 / pS=1; shared-A gated mainloop (see tile.cuh).
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
