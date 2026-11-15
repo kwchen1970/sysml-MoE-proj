@@ -1,0 +1,402 @@
+-------------------------------------------------------------------------------
+There are messages associated with the following module(s):
+-------------------------------------------------------------------------------
+
+libfabric/1.20.1:
+   This module is deprecated and will be removed in a future maintenance.
+   Please use the default libfabric instead.
+
+-------------------------------------------------------------------------------
+
+
+The following have been reloaded with a version change:
+  1) cudatoolkit/13.2 => cudatoolkit/12.9
+  2) libfabric/2.3.1 => libfabric/1.20.1
+
+=== build HYB4 (reg-gate, no gateCache, HYB2 dispatch) ===
+-- GPU 0 Compute Capability: 80
+-- Finding CCCL components: Thrust;CUB;libcudacxx;cudax
+-- cccl_cmake_dir: /pscratch/sd/r/rmf253/moe-exp/repo/csrc/cmake/cache/cccl/4f9d/lib/cmake/cccl
+-- Found Thrust: /pscratch/sd/r/rmf253/moe-exp/repo/csrc/cmake/cache/cccl/4f9d/lib/cmake/thrust/thrust-config.cmake (found suitable exact version "3.1.3.0")
+-- Found Thrust: /pscratch/sd/r/rmf253/moe-exp/repo/csrc/cmake/cache/cccl/4f9d/lib/cmake/thrust/thrust-config.cmake (found version "3.1.3.0")
+-- CPM: Adding package CCCL@3.1.3 (v3.1.3 at /pscratch/sd/r/rmf253/moe-exp/repo/csrc/cmake/cache/cccl/4f9d)
+-- CPM: Adding package CUTLASS@4.4.1 (v4.4.1 at /pscratch/sd/r/rmf253/moe-exp/repo/csrc/cmake/cache/cutlass/ad49)
+-- CPM: Adding package NVTX3@3.1.1 (v3.1.1-c-cpp at /pscratch/sd/r/rmf253/moe-exp/repo/csrc/cmake/cache/nvtx3/0457)
+-- Using GPU architectures native
+-- Finding CCCL...
+-- Cannot find nvtiff library.  Disabling MatX nvtiff features.
+-- CPM: Adding package MATX@0.9.4 (v0.9.4 at /pscratch/sd/r/rmf253/moe-exp/repo/csrc/cmake/cache/matx/04c1)
+-- mathdx: Found CUTLASS (NvidiaCutlass) dependency: /pscratch/sd/r/rmf253/mathdx/nvidia-mathdx-25.12.0-cuda12/nvidia/mathdx/25.12/external/cutlass/include
+-- cublasdx: Found CUTLASS (NvidiaCutlass) dependency: /pscratch/sd/r/rmf253/mathdx/nvidia-mathdx-25.12.0-cuda12/nvidia/mathdx/25.12/external/cutlass/include
+-- cublasdx: Found commondx dependency
+-- Found cublasdx: (Version: 0.5.0, Include dirs: /pscratch/sd/r/rmf253/mathdx/nvidia-mathdx-25.12.0-cuda12/nvidia/mathdx/25.12/include)
+-- mathDx: cublasdx found: /pscratch/sd/r/rmf253/mathdx/nvidia-mathdx-25.12.0-cuda12/nvidia/mathdx/25.12/include
+-- curanddx: Found commondx dependency
+-- Found curanddx: (Version: 0.2.2, Include dirs: /pscratch/sd/r/rmf253/mathdx/nvidia-mathdx-25.12.0-cuda12/nvidia/mathdx/25.12/include)
+-- mathDx: curanddx found: /pscratch/sd/r/rmf253/mathdx/nvidia-mathdx-25.12.0-cuda12/nvidia/mathdx/25.12/include
+-- CPM: Adding package pybind11@3.0.2 (v3.0.2 at /pscratch/sd/r/rmf253/moe-exp/repo/csrc/cmake/cache/pybind11/7a01)
+-- Configuring done (4.5s)
+-- Generating done (0.2s)
+-- Build files have been written to: /pscratch/sd/r/rmf253/moe-exp/repo/csrc/cmake-build-release
+[1/3] Building CUDA object CMakeFiles/testFlashMoE.dir/tests/flashmoe.cu.o
+/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/wait/nvshmemi_wait_until_apis.cuh(53): warning #3013-D: a volatile function parameter is deprecated
+      volatile T *addr, T val, int caller) {
+                        ^
+          detected during:
+            instantiation of "nvshmemi_wait_until_greater_than_equals" based on template argument <volatile long> at line 68 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/coll/barrier.cuh
+            instantiation of "void nvshmemi_sync_algo_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 193 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/coll/barrier.cuh
+            instantiation of "void nvshmemi_barrier_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 38 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/device/nvshmem_coll_defines.cuh
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/coll/barrier.cuh(75): warning #3012-D: a volatile destination type for a compound assignment expression is deprecated
+      if (!myIdx) sync_counter[0] += 1;
+                  ^
+          detected during:
+            instantiation of "void nvshmemi_sync_algo_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 193
+            instantiation of "void nvshmemi_barrier_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 38 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/device/nvshmem_coll_defines.cuh
+
+/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/coll/barrier.cuh(127): warning #3012-D: a volatile destination type for a compound assignment expression is deprecated
+      if (!myIdx) sync_counter[0] += 1;
+                  ^
+          detected during:
+            instantiation of "void sync_dissem_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 171
+            instantiation of "void nvshmemi_sync_algo_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 193
+            instantiation of "void nvshmemi_barrier_threadgroup<SCOPE>(nvshmem_team_t) [with SCOPE=nvshmemi_threadgroup_thread]" at line 38 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/device/nvshmem_coll_defines.cuh
+
+/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/non_abi/device/coll/reduce.cuh(664): warning #3012-D: a volatile destination type for a compound assignment expression is deprecated
+      if (!myIdx) sync_counter[0] += 1;
+                  ^
+          detected during:
+            instantiation of "void nvshmemi_gpu_rdxn_threadgroup<TYPE,OP,SCOPE>(nvshmem_team_t, TYPE *, const TYPE *, size_t) [with TYPE=unsigned char, OP=RDXN_OPS_and, SCOPE=nvshmemi_threadgroup_thread]" at line 1196
+            instantiation of "void nvshmemi_reduce_threadgroup<TYPE,OP,SCOPE,ONSTREAM>(nvshmem_team_t, TYPE *, const TYPE *, size_t) [with TYPE=unsigned char, OP=RDXN_OPS_and, SCOPE=nvshmemi_threadgroup_thread, ONSTREAM=0]" at line 100 of /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include/device/nvshmem_coll_defines.cuh
+
+ptxas info    : 258668 bytes gmem, 72 bytes cmem[3]
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EPlN4matx28RandomOperatorOutputIteratorINSD_6detail13tensor_impl_tIlLi0ENSD_13tensor_desc_tINS7_5arrayIxLm0EEESJ_Li0EEENSF_15DenseTensorDataIlEEEELb1EEEiS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EPlN4matx28RandomOperatorOutputIteratorINSD_6detail13tensor_impl_tIlLi0ENSD_13tensor_desc_tINS7_5arrayIxLm0EEESJ_Li0EEENSF_15DenseTensorDataIlEEEELb1EEEiS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 50 registers, used 1 barriers, 409 bytes cmem[0]
+ptxas info    : Compile time = 43.925 ms
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEENSC_28RandomOperatorOutputIteratorINSE_13tensor_impl_tIlLi0ENSL_INSM_IxLm0EEESV_Li0EEENSE_15DenseTensorDataIlEEEELb1EEEjS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEENSC_28RandomOperatorOutputIteratorINSE_13tensor_impl_tIlLi0ENSL_INSM_IxLm0EEESV_Li0EEENSE_15DenseTensorDataIlEEEELb1EEEjS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 54 registers, used 1 barriers, 505 bytes cmem[0]
+ptxas info    : Compile time = 112.484 ms
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EPlSC_iS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EPlSC_iS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 50 registers, used 1 barriers, 385 bytes cmem[0]
+ptxas info    : Compile time = 41.892 ms
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail6reduce18DeviceReduceKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEEjS9_lNS7_8identityEEEvT0_PT3_T1_NS0_13GridEvenShareISX_EET2_T4_' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail6reduce18DeviceReduceKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEEjS9_lNS7_8identityEEEvT0_PT3_T1_NS0_13GridEvenShareISX_EET2_T4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 53 registers, used 1 barriers, 510 bytes cmem[0]
+ptxas info    : Compile time = 118.326 ms
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEEPljS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail6reduce28DeviceReduceSingleTileKernelINS2_10policy_hubIljN4cuda3std3__44plusIvEEE10Policy1000EN4matx22RandomOperatorIteratorINSC_6detail11RCollapseOpILi2ENSE_9IsCloseOpINSC_8tensor_tINSC_8matxHalfI13__nv_bfloat16EELi2ENSC_13tensor_desc_tINS7_5arrayIxLm2EEESN_Li2EEEEESP_EEEELb1EEEPljS9_llNS7_8identityEEEvT0_T1_T2_T3_T4_T6_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 481 bytes cmem[0]
+ptxas info    : Compile time = 114.098 ms
+ptxas info    : Compiling entry function '_ZN3cub17CUB_300103_SM_8006detail11EmptyKernelIvEEvv' for 'sm_80'
+ptxas info    : Function properties for _ZN3cub17CUB_300103_SM_8006detail11EmptyKernelIvEEvv
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 4 registers, used 0 barriers, 352 bytes cmem[0]
+ptxas info    : Compile time = 0.574 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi64EEENS8_ILi1EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi64EEENS8_ILi1EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE
+    104 bytes stack frame, 92 bytes spill stores, 92 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 2027.595 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi64EEENS8_ILi1EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi64EEENS8_ILi1EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE
+    64 bytes stack frame, 60 bytes spill stores, 68 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1712.127 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi64EEENS8_ILi1EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi64EEENS8_ILi1EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE
+    112 bytes stack frame, 104 bytes spill stores, 108 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1898.828 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi64EEENS8_ILi1EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEES9_NS8_ILi64EEENS8_ILi1EEEEEESC_Li8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE
+    16 bytes stack frame, 12 bytes spill stores, 20 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1653.018 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEENS8_ILi64EEESA_NS8_ILi1EEEEEENS7_IJS9_S9_SA_SB_EEELi8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEENS8_ILi64EEESA_NS8_ILi1EEEEEENS7_IJS9_S9_SA_SB_EEELi8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE
+    72 bytes stack frame, 60 bytes spill stores, 60 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1601.795 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEENS8_ILi64EEESA_NS8_ILi1EEEEEENS7_IJS9_S9_SA_SB_EEELi8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE0ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEENS8_ILi64EEESA_NS8_ILi1EEEEEENS7_IJS9_S9_SA_SB_EEELi8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE
+    16 bytes stack frame, 16 bytes spill stores, 24 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1349.890 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEENS8_ILi64EEESA_NS8_ILi1EEEEEENS7_IJS9_S9_SA_SB_EEELi8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEENS8_ILi64EEESA_NS8_ILi1EEEEEENS7_IJS9_S9_SA_SB_EEELi8EEELNS_10ActivationE1ELNS_8TopologyE1EEEvNS0_10KernelArgsENS_7ContextE
+    96 bytes stack frame, 84 bytes spill stores, 92 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1510.831 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEENS8_ILi64EEESA_NS8_ILi1EEEEEENS7_IJS9_S9_SA_SB_EEELi8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe3moe7forwardINS0_9MoEConfigI13__nv_bfloat16Li800ELi128ELNS_11CombineModeE1ELNS_13MLPMatmulTypeE0EN4cute5tupleIJNS6_1CILi128EEENS8_ILi64EEESA_NS8_ILi1EEEEEENS7_IJS9_S9_SA_SB_EEELi8EEELNS_10ActivationE1ELNS_8TopologyE0EEEvNS0_10KernelArgsENS_7ContextE
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 664 bytes cmem[0]
+ptxas info    : Compile time = 1408.893 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi32EEENS4_ILi64EEENS4_ILi1EEEEEELi800ELi128ELNS_18GateReductionLevelE1ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi32EEENS4_ILi64EEENS4_ILi1EEEEEELi800ELi128ELNS_18GateReductionLevelE1ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 174 registers, used 1 barriers, 448 bytes cmem[0]
+ptxas info    : Compile time = 264.767 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi32EEENS4_ILi64EEENS4_ILi1EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi32EEENS4_ILi64EEENS4_ILi1EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 190 registers, used 1 barriers, 448 bytes cmem[0]
+ptxas info    : Compile time = 277.502 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi16EEENS4_ILi64EEENS4_ILi1EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi16EEENS4_ILi64EEENS4_ILi1EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 120 registers, used 1 barriers, 448 bytes cmem[0]
+ptxas info    : Compile time = 120.140 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi8EEENS4_ILi64EEENS4_ILi1EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe4gate13forwardKernelIN4cute5tupleIJNS2_1CILi128EEENS4_ILi8EEENS4_ILi64EEENS4_ILi1EEEEEELi800ELi128ELNS_18GateReductionLevelE0ELNS_24SoftMaxOptimizationLevelE0ELNS0_12ReturnLogitsE1Ef13__nv_bfloat16fEEvNS0_14GateKernelArgsENS_11GateContextE
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 113 registers, used 1 barriers, 448 bytes cmem[0]
+ptxas info    : Compile time = 78.761 ms
+ptxas info    : Compiling entry function '_ZN8flashmoe2bIEPN4cuda3__47barrierILNS0_3std3__412thread_scopeE1ENS4_18__empty_completionEEEj' for 'sm_80'
+ptxas info    : Function properties for _ZN8flashmoe2bIEPN4cuda3__47barrierILNS0_3std3__412thread_scopeE1ENS4_18__empty_completionEEEj
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 8 registers, used 0 barriers, 364 bytes cmem[0]
+ptxas info    : Compile time = 1.018 ms
+ptxas info    : Compiling entry function '_Z2gkIN8flashmoe4tile18CollectiveMainloopILi128ELi128ELi64ELi800E13__nv_bfloat16fLi128ELi1ELNS1_11TF32ComputeE0ELN8cublasdx11arrangementE1ELS6_0ELS6_1ELi16ELi16ELi16EEEN7cutlass8epilogue6thread4SiLuIfEELNS0_13MLPMatmulTypeE0ES3_S3_EvPKT2_SG_SG_PT3_PKSH_SK_NT_9AccumTypeESM_iii' for 'sm_80'
+ptxas info    : Function properties for _Z2gkIN8flashmoe4tile18CollectiveMainloopILi128ELi128ELi64ELi800E13__nv_bfloat16fLi128ELi1ELNS1_11TF32ComputeE0ELN8cublasdx11arrangementE1ELS6_0ELS6_1ELi16ELi16ELi16EEEN7cutlass8epilogue6thread4SiLuIfEELNS0_13MLPMatmulTypeE0ES3_S3_EvPKT2_SG_SG_PT3_PKSH_SK_NT_9AccumTypeESM_iii
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 242 registers, used 1 barriers, 420 bytes cmem[0]
+ptxas info    : Compile time = 579.943 ms
+ptxas info    : Compiling entry function '_Z16combineReferenceI13__nv_bfloat16EviiiiiPKT_PKN8flashmoe3TPSEPS1_' for 'sm_80'
+ptxas info    : Function properties for _Z16combineReferenceI13__nv_bfloat16EviiiiiPKT_PKN8flashmoe3TPSEPS1_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 14 registers, used 0 barriers, 400 bytes cmem[0]
+ptxas info    : Compile time = 3.083 ms
+ptxas info    : Compiling entry function '_Z12gatherTokensI13__nv_bfloat16EvPKN8flashmoe3TPSEPKT_PS5_jijj' for 'sm_80'
+ptxas info    : Function properties for _Z12gatherTokensI13__nv_bfloat16EvPKN8flashmoe3TPSEPKT_PS5_jijj
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 11 registers, used 0 barriers, 392 bytes cmem[0]
+ptxas info    : Compile time = 1.773 ms
+ptxas info    : Compiling entry function '_Z2gkIN8flashmoe4tile18CollectiveMainloopILi128ELi128ELi64ELi800E13__nv_bfloat16fLi128ELi1ELNS1_11TF32ComputeE0ELN8cublasdx11arrangementE1ELS6_0ELS6_1ELi16ELi16ELi16EEENS5_8identityELNS0_13MLPMatmulTypeE1ES3_S3_EvPKT2_SC_SC_PT3_PKSD_SG_NT_9AccumTypeESI_iii' for 'sm_80'
+ptxas info    : Function properties for _Z2gkIN8flashmoe4tile18CollectiveMainloopILi128ELi128ELi64ELi800E13__nv_bfloat16fLi128ELi1ELNS1_11TF32ComputeE0ELN8cublasdx11arrangementE1ELS6_0ELS6_1ELi16ELi16ELi16EEENS5_8identityELNS0_13MLPMatmulTypeE1ES3_S3_EvPKT2_SC_SC_PT3_PKSD_SG_NT_9AccumTypeESI_iii
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 216 registers, used 1 barriers, 420 bytes cmem[0]
+ptxas info    : Compile time = 81.447 ms
+ptxas info    : Compiling entry function '_Z2gkIN8flashmoe4tile18CollectiveMainloopILi128ELi64ELi64ELi800E13__nv_bfloat16fLi128ELi1ELNS1_11TF32ComputeE0ELN8cublasdx11arrangementE1ELS6_0ELS6_1ELi16ELi16ELi16EEEN7cutlass8epilogue6thread4SiLuIfEELNS0_13MLPMatmulTypeE0ES3_S3_EvPKT2_SG_SG_PT3_PKSH_SK_NT_9AccumTypeESM_iii' for 'sm_80'
+ptxas info    : Function properties for _Z2gkIN8flashmoe4tile18CollectiveMainloopILi128ELi64ELi64ELi800E13__nv_bfloat16fLi128ELi1ELNS1_11TF32ComputeE0ELN8cublasdx11arrangementE1ELS6_0ELS6_1ELi16ELi16ELi16EEEN7cutlass8epilogue6thread4SiLuIfEELNS0_13MLPMatmulTypeE0ES3_S3_EvPKT2_SG_SG_PT3_PKSH_SK_NT_9AccumTypeESM_iii
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 168 registers, used 1 barriers, 420 bytes cmem[0]
+ptxas info    : Compile time = 316.688 ms
+ptxas info    : Compiling entry function '_Z19generateRandUniformILi800ELb0ELb0E13__nv_bfloat16EvPT2_mlffy' for 'sm_80'
+ptxas info    : Function properties for _Z19generateRandUniformILi800ELb0ELb0E13__nv_bfloat16EvPT2_mlffy
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 14 registers, used 0 barriers, 392 bytes cmem[0]
+ptxas info    : Compile time = 3.674 ms
+ptxas info    : Compiling entry function '_Z19generateRandUniformILi800ELb1ELb0E13__nv_bfloat16EvPT2_mlffy' for 'sm_80'
+ptxas info    : Function properties for _Z19generateRandUniformILi800ELb1ELb0E13__nv_bfloat16EvPT2_mlffy
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers, 392 bytes cmem[0]
+ptxas info    : Compile time = 2.894 ms
+ptxas info    : Function properties for _Z14nvshmemi_quietIL13threadgroup_t2EEvv
+    8 bytes stack frame, 8 bytes spill stores, 8 bytes spill loads
+ptxas info    : Compile time = 1.601 ms
+ptxas info    : Function properties for _Z14nvshmemi_quietIL13threadgroup_t1EEvv
+    8 bytes stack frame, 8 bytes spill stores, 8 bytes spill loads
+ptxas info    : Compile time = 1.562 ms
+ptxas info    : Function properties for _Z14nvshmemi_quietIL13threadgroup_t0EEvv
+    8 bytes stack frame, 8 bytes spill stores, 8 bytes spill loads
+ptxas info    : Compile time = 1.286 ms
+[2/3] Linking CXX executable CMakeFiles/testFlashMoE.dir/cmake_device_link.o
+[3/3] Linking CXX executable testFlashMoE
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+0, bf16, 4096, 2048, 1408, 16, 6, 3.971664, 0.022602, 1536, NVIDIA A100-SXM4-40GB, sm_80, SingleNode, Gated, 128, 128, 64, 128, 64, 128, 2, 108, 216, 8.0e-02, 8.0e-03, 0, 1, 2, 450.992680
+SMOKE_HYB4_ANCHOR_RC=0
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+SMOKE_HYB4_MID_RC=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+0, bf16, 4096, 2048, 2048, 32, 2, 1.808464, 0.000000, 256, NVIDIA A100-SXM4-40GB, sm_80, SingleNode, Gated, 128, 128, 64, 128, 64, 128, 2, 108, 216, 8.0e-02, 8.0e-03, 0, 1, 2, 160.426151
+SMOKE_BK64_MID_RC=0
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+0, bf16, 4096, 2048, 2048, 32, 2, 2.073280, 0.000000, 256, NVIDIA A100-SXM4-40GB, sm_80, SingleNode, Gated, 128, 64, 64, 128, 64, 128, 2, 108, 216, 8.0e-02, 8.0e-03, 0, 1, 2, 160.490604
+SMOKE_HYB2_MID_RC=0
+NVIDIA A100-SXM4-40GB, 40960 MiB
+tag,round,S,H,I,E,k,latency_ms,error_pct
+BK64,0,1024,2048,2048,32,2,0.975868,0.000000
+HYB2,0,1024,2048,2048,32,2,0.918000,0.000000
+FAIL,HYB4,0,1024 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+HYB2,1,1024,2048,2048,32,2,0.945226,0.000000
+FAIL,HYB4,1,1024 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,1,1024,2048,2048,32,2,1.102662,0.000000
+FAIL,HYB4,2,1024 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,2,1024,2048,2048,32,2,1.090886,0.000000
+HYB2,2,1024,2048,2048,32,2,0.946752,0.000000
+BK64,0,4096,2048,2048,32,2,1.872450,0.000000
+HYB2,0,4096,2048,2048,32,2,1.718100,0.000000
+FAIL,HYB4,0,4096 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+HYB2,1,4096,2048,2048,32,2,1.709108,0.000000
+FAIL,HYB4,1,4096 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,1,4096,2048,2048,32,2,1.851106,0.000000
+FAIL,HYB4,2,4096 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,2,4096,2048,2048,32,2,2.055516,0.000000
+HYB2,2,4096,2048,2048,32,2,1.716816,0.000000
+BK64,0,8192,2048,2048,32,2,3.749690,0.000000
+HYB2,0,8192,2048,2048,32,2,3.501082,0.000000
+FAIL,HYB4,0,8192 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+HYB2,1,8192,2048,2048,32,2,3.738104,0.000000
+FAIL,HYB4,1,8192 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,1,8192,2048,2048,32,2,3.486304,0.000000
+FAIL,HYB4,2,8192 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,2,8192,2048,2048,32,2,3.470976,0.000000
+HYB2,2,8192,2048,2048,32,2,3.885312,0.000000
+BK64,0,16384,2048,2048,32,2,6.730964,0.000000
+HYB2,0,16384,2048,2048,32,2,7.165014,0.000000
+FAIL,HYB4,0,16384 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+HYB2,1,16384,2048,2048,32,2,6.794104,0.000000
+FAIL,HYB4,1,16384 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,1,16384,2048,2048,32,2,7.155406,0.000000
+FAIL,HYB4,2,16384 2048 2048 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,2,16384,2048,2048,32,2,6.789072,0.000000
+HYB2,2,16384,2048,2048,32,2,6.615006,0.000000
+BK64,0,4096,2048,2048,8,2,1.701324,0.000000
+HYB2,0,4096,2048,2048,8,2,1.744768,0.000000
+FAIL,HYB4,0,4096 2048 2048 8 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+HYB2,1,4096,2048,2048,8,2,1.984504,0.000000
+FAIL,HYB4,1,4096 2048 2048 8 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,1,4096,2048,2048,8,2,2.025528,0.000000
+FAIL,HYB4,2,4096 2048 2048 8 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,2,4096,2048,2048,8,2,2.080398,0.000000
+HYB2,2,4096,2048,2048,8,2,1.597782,0.000000
+BK64,0,4096,2048,2048,16,2,1.853178,0.000000
+HYB2,0,4096,2048,2048,16,2,1.628208,0.000000
+FAIL,HYB4,0,4096 2048 2048 16 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+HYB2,1,4096,2048,2048,16,2,1.891460,0.000000
+FAIL,HYB4,1,4096 2048 2048 16 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,1,4096,2048,2048,16,2,2.125776,0.000000
+FAIL,HYB4,2,4096 2048 2048 16 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,2,4096,2048,2048,16,2,1.751928,0.000000
+HYB2,2,4096,2048,2048,16,2,1.936544,0.000000
+BK64,0,4096,2048,2048,128,2,4.125536,0.000000
+HYB2,0,4096,2048,2048,128,2,3.900870,0.000000
+FAIL,HYB4,0,4096 2048 2048 128 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+HYB2,1,4096,2048,2048,128,2,3.926894,0.000000
+FAIL,HYB4,1,4096 2048 2048 128 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,1,4096,2048,2048,128,2,4.095936,0.000000
+FAIL,HYB4,2,4096 2048 2048 128 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,2,4096,2048,2048,128,2,4.114656,0.000000
+HYB2,2,4096,2048,2048,128,2,3.918524,0.000000
+BK64,0,4096,2048,1024,32,2,1.393436,0.000000
+HYB2,0,4096,2048,1024,32,2,1.149158,0.000000
+FAIL,HYB4,0,4096 2048 1024 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+HYB2,1,4096,2048,1024,32,2,1.375774,0.000000
+FAIL,HYB4,1,4096 2048 1024 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,1,4096,2048,1024,32,2,1.168088,0.000000
+FAIL,HYB4,2,4096 2048 1024 32 2,rc=1
+rank, dtype, S, H, I, E, k, FlashMoE_Time(ms), error(%), EC, GPU, SM, Topology, MLPType, bM, bN0, bK0, bN1, bK1, threads, blocks/SM, SMs, blocks, rtol, atol, graph_launches, warmup, runs, workspace(MiB)
+</pscratch/sd/r/rmf253/moe-exp/repo/csrc/tests/flashmoe.cu:618> cudaEventCreate(&start):
+    cudaErrorIllegalAddress: an illegal memory access was encountered
+BK64,2,4096,2048,1024,32,2,1.258000,0.000000
+HYB2,2,4096,2048,1024,32,2,1.351756,0.000000
+BK64,0,4096,2048,4096,32,2,3.088652,0.000000
+HYB2,0,4096,2048,4096,32,2,3.095464,0.000000
+HYB4,0,4096,2048,4096,32,2,3.289214,0.000000
+HYB2,1,4096,2048,4096,32,2,3.680080,0.000000
+HYB4,1,4096,2048,4096,32,2,3.086484,0.000000
+BK64,1,4096,2048,4096,32,2,3.087358,0.000000
+HYB4,2,4096,2048,4096,32,2,3.087780,0.000000
+BK64,2,4096,2048,4096,32,2,3.101418,0.000000
+HYB2,2,4096,2048,4096,32,2,3.082970,0.000000
+BK64,0,4096,2048,8192,32,2,5.840958,0.000000
+HYB2,0,4096,2048,8192,32,2,5.827274,0.000000
+HYB4,0,4096,2048,8192,32,2,6.058090,0.000000
+HYB2,1,4096,2048,8192,32,2,5.850782,0.000000
+HYB4,1,4096,2048,8192,32,2,5.966516,0.000000
+BK64,1,4096,2048,8192,32,2,5.839134,0.000000
+HYB4,2,4096,2048,8192,32,2,5.763132,0.000000
+BK64,2,4096,2048,8192,32,2,5.848280,0.000000
+HYB2,2,4096,2048,8192,32,2,5.852822,0.000000
+BK64,0,4096,2048,1408,16,6,3.844348,0.072110
+HYB2,0,4096,2048,1408,16,6,3.889714,0.060260
+HYB4,0,4096,2048,1408,16,6,4.311292,0.008547
+HYB2,1,4096,2048,1408,16,6,4.667640,0.063908
+HYB4,1,4096,2048,1408,16,6,3.888098,0.074089
+BK64,1,4096,2048,1408,16,6,3.943774,0.064540
+HYB4,2,4096,2048,1408,16,6,3.846214,0.000000
+BK64,2,4096,2048,1408,16,6,4.400858,0.061119
+HYB2,2,4096,2048,1408,16,6,3.842010,0.065601
+DONE
