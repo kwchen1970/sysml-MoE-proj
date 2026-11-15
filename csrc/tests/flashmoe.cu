@@ -812,8 +812,9 @@ void drive(const int argc, char** argv) {
   if (E != 8 && E != 16 && E != 32 && E % 32 != 0) {
     throw std::invalid_argument("E must be 8, 16, 32, or a multiple of 32 for this benchmark");
   }
+  // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
-    && I < 4096);
+    && I < 4096 && k <= 2);
   auto launch = [&](auto bN0C) {
     constexpr int bN0 = decltype(bN0C)::value;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {

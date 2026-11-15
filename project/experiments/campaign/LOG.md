@@ -208,6 +208,10 @@ Correct (error ~0.06%). Mean **−2.9%** / median **−3.4%** over 11 shapes, bu
 
 Job **61355082** (partial+): about **+8–11%** vs BK64 on every finished shape. Narrow-N without shared-A is a loss; the SH64 mean win was from shared-A.
 
-## Next: hybrid shared-A
+## Mixed: hybrid I-threshold (job 61355759)
 
-`I < 4096`: shared-A at `bN0=64`. `I >= 4096`: BK64 two-pass at `bN0=128`. Keeps SH64 wins on the mid-I sweep and BK64 on wide-I shapes that regressed.
+Mean **−2.8%**, but **anchor +12.9%** (HYB 4.38 vs BK64 3.88). Shared-A at k=6 is the regression; k=2 mid-I shapes still win (E=16 −11.6%, I=1024 −13.4%).
+
+## Next: hybrid shared-A only for k≤2
+
+`I < 4096 && k <= 2`: shared-A `bN0=64`. Else BK64 two-pass `bN0=128` (covers the gated anchor).
