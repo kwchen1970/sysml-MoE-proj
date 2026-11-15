@@ -791,24 +791,27 @@ void drive(const int argc, char** argv) {
   // to minimize instantiated templates
   constexpr int bN0 = sizeof(Element) == 2 ? 128 : 64; // 144 for gpt-oss
   constexpr int bN1 = bN0;
-  // Ampere gated: bK=64 with one K-stage keeps AB smem at 32 KB (same as
-  // bK=32/pS=2) but halves K-loop trips. Campaign notes with single-expert
-  // affinity measured about 3.81 ms at the anchor vs ~3.92 ms at bK=32/pS=2.
+  // Ampere gated: GEMM0 bK=64/pS=1 + gateCache (64 KB). GEMM1 can spend the
+  // same 64 KB AB budget on bK=128/pS=1 (fewer down-proj K trips) without
+  // growing kernel smem (max of the two).
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
-  constexpr int bK1 = bK0;
+  constexpr int bK1 = cuda::std::is_same_v<Element, double> ? 32
+    : (arch >= 800 && mt == flashmoe::MLPMatmulType::gated) ? 128
+    : bK0;
   if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
     throw std::invalid_argument("H is invalid");
   }
   if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
     throw std::invalid_argument("I is invalid");
   }
-  // Ampere gated: GEMM0 stays pS=1 (gateCache needs the 32 KB slot). GEMM1
-  // can take pS=2 at the same 64 KB AB footprint — kernel smem is max().
   constexpr auto pS0 = arch >= 900 ? 3 : arch >= 800
     ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1;
-  constexpr auto pS1 = arch >= 900 ? 3 : arch >= 800 ? 2 : 1;
+  // GEMM1 at bK=128 uses one stage so AB stays 64 KB (same as gated GEMM0).
+  constexpr auto pS1 = arch >= 900 ? 3 : arch >= 800
+    ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
+    : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128; // hopper, S >= 4096 -> bM = 256
   static_assert(bM >= 1);
   if (S < 1 || (S > bM && S % bM != 0)) {

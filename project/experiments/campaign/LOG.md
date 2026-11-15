@@ -180,6 +180,10 @@ Anchor is inside noise; most shapes are flat-to-slower. Restored single-expert a
 
 Job **61349915** after a full `flashmoe/` sync: smoke and every A/B shape illegal-addressed; BK64 binary stayed clean. Confirms the earlier crash was real, not a mixed-tree artifact. Reverted to gateCache + Ampere gated `bK=64/pS=1`.
 
-## Next: asymmetric GEMM1 pipeline on BK64
+## Closed: asymmetric GEMM1 pS=2 on BK64 (mixed / no anchor win)
 
-GateCache only taxes GEMM0. Kernel smem is `max(GEMM0, GEMM1)`, so Ampere gated can keep GEMM0 at `bK=64/pS=1` (64 KB with gate) and raise GEMM1 to `pS=2` (also 64 KB AB) without growing the footprint or touching the broken gmem path.
+Job **61350226**: smoke OK, error in band. Mean −0.9% / median −1.7% over 11 shapes, but **anchor +1.8%** (PS1G1 rounds 4.24 / 4.13 / 4.09 vs BK64 3.87 / 4.52 / 3.84). Not a keep — GEMM1 double-buffering does not beat fewer K trips at the gated anchor.
+
+## Next: asymmetric GEMM1 bK=128 / pS=1 on BK64
+
+Same 64 KB AB budget on GEMM1, spent on wider K tiles instead of a second stage. GEMM0 stays `bK=64/pS=1` + gateCache.
