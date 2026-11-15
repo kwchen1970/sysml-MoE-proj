@@ -148,6 +148,10 @@ Perlmutter job **61296242** (OCC3): illegal address on every shape — same fail
 
 All three spends of the freed 32 KB crashed (`cudaErrorIllegalAddress`): bK=128, bK=64/pS=2, and OCC3 (bK=64/pS=1 + launch_bounds=3). Reverted processor/moe/constants to the BK64 gateCache baseline.
 
-## Next: diagnose staging vs smem undersize
+## Closed: gmem staging logic (not just smem size)
 
-Re-apply gmem staging in `processor.cuh` only, while **keeping** the 64 KB GEMM0 reservation (gated surcharge still in `moe.cuh`). If that runs clean, prior crashes were undersized dynamic smem / C-layout overflow; then size correctly and retry pS=2. If it still crashes, the staging sequence itself is wrong on this tree.
+Diagnostic job **61347583**: gmem staging with the 64 KB GEMM0 surcharge still reserved also illegal-addressed on every shape. The staging sequence itself is wrong on this tree (or incompatible with BK64’s cublasdx layouts). Abandoned; restored gateCache path.
+
+## Next: `__launch_bounds__(threads, 2)` on BK64
+
+BK64 already runs at 2 blocks/SM. Raising `minBlocksPerMultiprocessor` from 1 → 2 asks the compiler to drop the 255-reg unconstrained schedule and free ILP inside the same occupancy. No smem change. Compare against the BK64 binary.

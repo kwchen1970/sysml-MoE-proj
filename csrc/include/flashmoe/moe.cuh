@@ -162,7 +162,10 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  __launch_bounds__(Config::Threads::value, 1)
+  // Ask the compiler for 2 resident blocks (BK64 already lands at 2 from
+  // smem/regs). minBlocks=1 allowed 255 regs; targeting 2 can free ILP inside
+  // the same occupancy.
+  __launch_bounds__(Config::Threads::value, 2)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
