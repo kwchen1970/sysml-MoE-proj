@@ -98,7 +98,8 @@ namespace flashmoe::moe
   __host__ __forceinline__
   constexpr auto kernelBlocks(const uint& S, const uint& H, const uint& I, const uint& E,
     const uint& k, const int& blocksPerSM, const int& numSMs) {
-    const auto processorBlocks = cute::ceil_div(S * k, bM) * ((I / bN0) + (H / bN1));
+    const auto tilesN0 = (bN0 == 32) ? (I / (2 * bN0)) : (I / bN0);
+    const auto processorBlocks = cute::ceil_div(S * k, bM) * (tilesN0 + (H / bN1));
     const auto dispatchBlocks = cute::min(dispatchSuperBlockSize(E) * E, MAX_DISPATCH_BLOCKS);
     return cute::max(cute::min(cute::max(processorBlocks, dispatchBlocks) + 1, blocksPerSM * numSMs), 2);
   }
@@ -201,7 +202,8 @@ namespace flashmoe::moe
       constexpr auto subscriberCount = threads - scheduler::SCHEDULER_COUNT;
       static_assert(subscriberCount > 0 && subscriberCount % WARP_SIZE == 0);
       os::start<topo, subscriberCount, threads, bM, Config::PSS::value, DataType>(flashWorkspace,
-        kArgs.expertCounts, symHeap, ctx, kArgs.EC,kArgs.I / bN0, kArgs.H / bN1, dispatchBlocks,
+        kArgs.expertCounts, symHeap, ctx, kArgs.EC,
+        (bN0 == 32 ? kArgs.I / (2 * bN0) : kArgs.I / bN0), kArgs.H / bN1, dispatchBlocks,
         kArgs.E, kArgs.I, processors);
       FLASHMOE_TRACE_FINISH();
       return;
@@ -223,7 +225,8 @@ namespace flashmoe::moe
     };
     using AccumType = Config::AccumType;
     using GEMM0Act = ActivationType<AccumType, a>::AT;
-    const auto tilesN0 = kArgs.I / bN0;
+    // Dual-N shared-A (bN0==32): each GEMM0 task covers two N tiles.
+    const auto tilesN0 = (bN0 == 32) ? (kArgs.I / (2 * bN0)) : (kArgs.I / bN0);
     const auto tilesN1 = kArgs.H / bN1;
 
     const auto ecTilesM = cute::ceil_div(kArgs.EC, bM);

@@ -92,10 +92,59 @@ namespace flashmoe::processor
     constexpr Activation act{};
     constexpr Converter<typename TileGEMM::AccumType, ElementC> loadConv{};
     constexpr Converter<ElementC, typename TileGEMM::AccumType> storeConv{};
-    const auto tileCoord = tile::idx2Coord(M / BM{}, N / BN{}, tileIdx);
     constexpr TileGEMM tileMainloop{};
-    // bN<=64: shared-A (two accumulators fit). Wider tiles: classic two-pass.
-    if constexpr (BN{} <= 64) {
+    // Dual-N shared-A at bN=32: tileIdx indexes N-pairs; one A load covers two N tiles.
+    if constexpr (BN{} == 32) {
+      const int pairsN = N / (2 * BN{});
+      const int mCoord = tileIdx / pairsN;
+      const int n0 = 2 * (tileIdx % pairsN);
+      const int n1 = n0 + 1;
+      const auto tileCoord0 = cute::make_coord(mCoord, n0, cute::_);
+      const auto tileCoord1 = cute::make_coord(mCoord, n1, cute::_);
+      auto* __restrict__ gateCache = workspace + cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
+          TileGEMM::SharedSizeABGated::value), TileGEMM::GeneralAlignment::value);
+      auto accGate0 = BLAS::suggest_accumulator();
+      auto accUp0 = BLAS::suggest_accumulator();
+      auto accGate1 = BLAS::suggest_accumulator();
+      auto accUp1 = BLAS::suggest_accumulator();
+      tileMainloop.gated2(workspace, a, b, bV, accGate0, accUp0, accGate1, accUp1,
+                          M, N, K, tileCoord0, tileCoord1);
+      auto sGate = cublasdx::make_tensor(reinterpret_cast<ElementC*>(gateCache), BLAS::suggest_layout_smem_c());
+      auto sC = cublasdx::make_tensor(reinterpret_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
+      auto epilogue = [&](auto& accGate, auto& accUp, const auto& tileCoord) {
+        __syncthreads();
+        const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
+        auto d_frag = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
+        cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accGate);
+        const auto c_frag = accGate.get_results();
+        constexpr int accum_size = cublasdx::size(c_frag);
+        cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+          const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
+          d_frag(i) = storeConv(swishAlpha * act(g));
+        });
+        cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sGate, accGate);
+        auto cv_frag = accUp.get_results();
+        const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
+        cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accUp);
+        cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+          cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
+        });
+        __syncthreads();
+        cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sGate, d_frag, accUp);
+        cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+          d_frag(i) = storeConv(cv_frag(i) * loadConv(d_frag(i)));
+        });
+        auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
+        __syncthreads();
+        cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accUp);
+        __syncthreads();
+        cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
+      };
+      epilogue(accGate0, accUp0, tileCoord0);
+      epilogue(accGate1, accUp1, tileCoord1);
+    } else if constexpr (BN{} == 64) {
+      // Classic shared-A (HYB2): one N tile, two accumulators.
+      const auto tileCoord = tile::idx2Coord(M / BM{}, N / BN{}, tileIdx);
       auto* __restrict__ gateCache = workspace + cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
           TileGEMM::SharedSizeABGated::value), TileGEMM::GeneralAlignment::value);
       auto accGate = BLAS::suggest_accumulator();
@@ -131,6 +180,7 @@ namespace flashmoe::processor
       __syncthreads();
       cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
     } else {
+      const auto tileCoord = tile::idx2Coord(M / BM{}, N / BN{}, tileIdx);
       auto* __restrict__ gateCache = workspace + cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
           TileGEMM::SharedSizeAB::value), TileGEMM::GeneralAlignment::value);
       auto accumulator = BLAS::suggest_accumulator();
