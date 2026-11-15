@@ -393,6 +393,11 @@ namespace flashmoe::tile
       (cublasdx::cosize(BLAS::suggest_layout_smem_a())
         + 2 * cublasdx::cosize(BLAS::suggest_layout_smem_b()))
       * pipeStages * sizeof(Element), GeneralAlignment::value)>;
+    // Dual-N: A + four B panels (Bg0,Bu0,Bg1,Bu1) so both N tiles preload together.
+    using SharedSizeABGated2 = cute::Int<cutlass::round_up(
+      (cublasdx::cosize(BLAS::suggest_layout_smem_a())
+        + 4 * cublasdx::cosize(BLAS::suggest_layout_smem_b()))
+      * pipeStages * sizeof(Element), GeneralAlignment::value)>;
     using SharedSizeC = cute::Int<cutlass::round_up(bM * bN * sizeof(Element), GeneralAlignment::value)>;
     using CArr = cute::C<cr>;
     using AAlign = cute::Int<aAlignment>;
@@ -515,8 +520,7 @@ namespace flashmoe::tile
       });
     }
 
-    // Dual-N shared-A (pS=1): one A load feeds gate/up for two adjacent N tiles.
-    // Four half-width (bN=32) accums ≈ two bN=64 accums in register pressure.
+    // Dual-N shared-A (pS=1): preload A + Bg0/Bu0/Bg1/Bu1, then four MMAs.
     template <typename Accumulator, typename TileCoord>
       requires(cute::rank_v<TileCoord> == 3 && cublasdx::is_blas_execution_v<BLAS> && pipeStages == 1)
     __device__ __forceinline__
@@ -545,26 +549,27 @@ namespace flashmoe::tile
       constexpr auto sASS = cublasdx::cosize(BLAS::suggest_layout_smem_a());
       constexpr auto sBSS = cublasdx::cosize(BLAS::suggest_layout_smem_b());
       auto* __restrict__ sAP = static_cast<Element*>(workspace);
-      auto* __restrict__ sBGP = sAP + sASS;
-      auto* __restrict__ sBUP = sBGP + sBSS;
+      auto* __restrict__ sBg0P = sAP + sASS;
+      auto* __restrict__ sBu0P = sBg0P + sBSS;
+      auto* __restrict__ sBg1P = sBu0P + sBSS;
+      auto* __restrict__ sBu1P = sBg1P + sBSS;
       auto sA = cublasdx::make_tensor(sAP, BLAS::suggest_layout_smem_a());
-      auto sBg = cublasdx::make_tensor(sBGP, BLAS::suggest_layout_smem_b());
-      auto sBu = cublasdx::make_tensor(sBUP, BLAS::suggest_layout_smem_b());
+      auto sBg0 = cublasdx::make_tensor(sBg0P, BLAS::suggest_layout_smem_b());
+      auto sBu0 = cublasdx::make_tensor(sBu0P, BLAS::suggest_layout_smem_b());
+      auto sBg1 = cublasdx::make_tensor(sBg1P, BLAS::suggest_layout_smem_b());
+      auto sBu1 = cublasdx::make_tensor(sBu1P, BLAS::suggest_layout_smem_b());
       for (int kStage = 0; kStage < tilesK; ++kStage) {
         cublasdx::copy<BLAS, aAlignment>(gA(cute::_, cute::_, kStage), sA);
-        cublasdx::copy<BLAS, bAlignment>(gBg0(cute::_, cute::_, kStage), sBg);
-        cublasdx::copy<BLAS, bAlignment>(gBu0(cute::_, cute::_, kStage), sBu);
+        cublasdx::copy<BLAS, bAlignment>(gBg0(cute::_, cute::_, kStage), sBg0);
+        cublasdx::copy<BLAS, bAlignment>(gBu0(cute::_, cute::_, kStage), sBu0);
+        cublasdx::copy<BLAS, bAlignment>(gBg1(cute::_, cute::_, kStage), sBg1);
+        cublasdx::copy<BLAS, bAlignment>(gBu1(cute::_, cute::_, kStage), sBu1);
         cpFence();
         cpWait<0>();
-        BLAS().execute(sA, sBg, accGate0, transformOp, transformOp);
-        BLAS().execute(sA, sBu, accUp0, transformOp, transformOp);
-        __syncthreads();
-        cublasdx::copy<BLAS, bAlignment>(gBg1(cute::_, cute::_, kStage), sBg);
-        cublasdx::copy<BLAS, bAlignment>(gBu1(cute::_, cute::_, kStage), sBu);
-        cpFence();
-        cpWait<0>();
-        BLAS().execute(sA, sBg, accGate1, transformOp, transformOp);
-        BLAS().execute(sA, sBu, accUp1, transformOp, transformOp);
+        BLAS().execute(sA, sBg0, accGate0, transformOp, transformOp);
+        BLAS().execute(sA, sBu0, accUp0, transformOp, transformOp);
+        BLAS().execute(sA, sBg1, accGate1, transformOp, transformOp);
+        BLAS().execute(sA, sBu1, accUp1, transformOp, transformOp);
         __syncthreads();
       }
     }

@@ -102,7 +102,7 @@ namespace flashmoe::processor
       const auto tileCoord0 = cute::make_coord(mCoord, n0, cute::_);
       const auto tileCoord1 = cute::make_coord(mCoord, n1, cute::_);
       auto* __restrict__ gateCache = workspace + cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
-          TileGEMM::SharedSizeABGated::value), TileGEMM::GeneralAlignment::value);
+          TileGEMM::SharedSizeABGated2::value), TileGEMM::GeneralAlignment::value);
       auto accGate0 = BLAS::suggest_accumulator();
       auto accUp0 = BLAS::suggest_accumulator();
       auto accGate1 = BLAS::suggest_accumulator();
