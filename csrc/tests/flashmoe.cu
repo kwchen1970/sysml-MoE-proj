@@ -794,7 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI18: ARCH6 tip + shared-A GEMM0 pS0=3 (GEMM1 stays pS1=1). Carveout abandoned (EPI17).
+  // EPI19: ARCH6 tip + NCU9 L2 prefetch next-K in GEMM mainloop (tile.cuh).
+  // Reverts EPI18 pS0=3 (NO_KEEP +23%). Bar: ARCH6.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -865,8 +866,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI18: deepen shared-A GEMM0 pipeline to 3 stages (ARCH6/NCU10 used 2).
-    launch(cute::Int<64>{}, cute::Int<3>{});
+    launch(cute::Int<64>{}, cute::Int<2>{}); // ARCH6/NCU10: deepen shared-A GEMM0 only
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
   }
