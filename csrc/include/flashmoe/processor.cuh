@@ -104,7 +104,8 @@ namespace flashmoe::processor
         cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_fragV, accUp);
       }
       tileMainloop.gated(workspace, a, b, bV, accGate, accUp, M, N, K, tileCoord);
-      __syncthreads();
+      // NCU8: drop post-gated sync — accGate/accUp and bias frags are registers;
+      // keep the sync below before reading sGate.
       const auto c_frag = accGate.get_results();
       constexpr int accum_size = cublasdx::size(c_frag);
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
