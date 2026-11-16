@@ -59,14 +59,8 @@ namespace flashmoe::processor
       d_frag(i) = storeConv(act(c_frag(i) + loadConv(d_frag(i))));
     });
     auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
-    // TODO For Optimizing the below copy, TMA may help
-    // rmem -> smem
-    auto sC = cublasdx::make_tensor(static_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
-    __syncthreads();
-    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
-    __syncthreads();
-    // smem -> gmem
-    cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
+    // HYB26: direct rmem->gmem for vanilla fGET (GEMM1 / vanilla GEMM0), matching gated HYB17.
+    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, gC, accumulator);
   }
 
   template <
