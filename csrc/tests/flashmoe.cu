@@ -792,7 +792,7 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB14: two-pass direct-gmem; shared-A I<4096 && k<=2.
+  // Ampere gated HYB17: HYB14 + direct gmem on shared-A too (keep gateCache).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
