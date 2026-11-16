@@ -37,4 +37,12 @@ grep -q '^VERDICT NO_KEEP' "${OUT}/auto/keep_gate.txt"
   --cand HYB17 --base BK64 --auto-margin --out "${OUT}/vs_bk64" | tee "${OUT}/vs_bk64.log"
 grep -q '^VERDICT KEEP' "${OUT}/vs_bk64/keep_gate.txt"
 
+# Strict LOO: HYB17 vs HYB2 is shape-fragile → NO_KEEP; vs BK64 still KEEP.
+"$PYTHON" "${SCRIPT_DIR}/parse_keep_gate.py" "$HYB17_OUT" \
+  --cand HYB17 --base HYB2 --require-loo-margin --out "${OUT}/loo_hyb2" | tee "${OUT}/loo_hyb2.log"
+grep -q '^VERDICT NO_KEEP' "${OUT}/loo_hyb2/keep_gate.txt"
+"$PYTHON" "${SCRIPT_DIR}/parse_keep_gate.py" "$HYB17_OUT" \
+  --cand HYB17 --base BK64 --require-loo-margin --out "${OUT}/loo_bk64" | tee "${OUT}/loo_bk64.log"
+grep -q '^VERDICT KEEP' "${OUT}/loo_bk64/keep_gate.txt"
+
 echo "SELF_TEST_OK"

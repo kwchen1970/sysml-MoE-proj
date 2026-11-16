@@ -261,6 +261,7 @@ def keep_decision(
     error_max: float,
     min_geo_margin_pct: float,
     require_anchor_win: bool,
+    require_loo_margin: bool = False,
 ) -> dict[str, Any]:
     cand_rows = [r for r in rows if r["tag"] == cand and not r.get("smoke")]
     err_viol = [r for r in cand_rows if r["error_pct"] > error_max]
@@ -316,24 +317,31 @@ def keep_decision(
             f"|{boot_abs:.3f}%| on {cand}"
         )
     loo_hi = cmp.get("geo_loo_hi_pct")
+    ok_loo = True
     if (
         loo_hi == loo_hi
         and loo_hi is not None
         and ok_fast
         and loo_hi > -min_geo_margin_pct
     ):
-        reasons.append(
-            f"WARNING leave-one-out geo hi {loo_hi:+.3f}% fails margin "
+        msg = (
+            f"leave-one-out geo hi {loo_hi:+.3f}% fails margin "
             f"{min_geo_margin_pct:g}% (shape-fragile keep)"
         )
+        if require_loo_margin:
+            ok_loo = False
+            reasons.append(msg)
+        else:
+            reasons.append("WARNING " + msg)
 
-    keep = bool(ok_correct and ok_fast and ok_anchor)
+    keep = bool(ok_correct and ok_fast and ok_anchor and ok_loo)
     return {
         "keep": keep,
         "verdict": "KEEP" if keep else "NO_KEEP",
         "ok_correct": ok_correct,
         "ok_fast": ok_fast,
         "ok_anchor": ok_anchor,
+        "ok_loo": ok_loo,
         "reasons": reasons,
         "error_violations": len(err_viol),
         "fail_lines": len(fails),
@@ -501,6 +509,11 @@ def main() -> int:
         help="Raise margin to max(default, odd/even bootstrap×1.5 recommendation)",
     )
     p.add_argument(
+        "--require-loo-margin",
+        action="store_true",
+        help="FAIL keep if leave-one-out geo hi does not clear -margin (shape-fragile)",
+    )
+    p.add_argument(
         "--require-anchor-win",
         action="store_true",
         help="Also require anchor shape delta < 0",
@@ -574,6 +587,7 @@ def main() -> int:
             error_max=args.error_max,
             min_geo_margin_pct=margin,
             require_anchor_win=args.require_anchor_win,
+            require_loo_margin=args.require_loo_margin,
         )
         decision["min_geo_margin_pct"] = margin
 
