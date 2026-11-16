@@ -1,0 +1,13 @@
+EPI1 plan (apply only if EPI0 correct but not faster than HYB17):
+
+In csrc/tests/flashmoe.cu Ampere gated:
+  pS: gated ? 1 : 2  →  gated ? 2 : 2   (i.e. pS=2 for gated too)
+
+Cosize-true AB should make this safe; prior pS=2 illegal-address was undersized
+geometric AB + broken staging. A100 opt-in smem is 164KB so 2*ABGated@pS=2
+should fit.
+
+Also try EPI2 if EPI1 fails/slows: bK0=bK1=128 with pS=1 (closed before due to
+illegal address under bad sizing).
+
+Submit as job epi1-ps2 under /pscratch/.../ab/epi/ with unique binary testFlashMoE.epi1
