@@ -90,7 +90,8 @@ namespace flashmoe::moe
       : TileG0::SharedSizeAB::value;
 #endif
 #if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 26
-    constexpr auto gemm0ExtraC = (mt == MLPMatmulType::gated ? 2 : 0);
+    // Two bias slabs only on shared-A (bN0<=64); wide two-pass stays one C (occupancy).
+    constexpr auto gemm0ExtraC = (mt == MLPMatmulType::gated ? (bN0 <= 64 ? 2 : 1) : 0);
 #else
     constexpr auto gemm0ExtraC = (mt == MLPMatmulType::gated ? 1 : 0);
 #endif

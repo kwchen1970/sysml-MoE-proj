@@ -379,7 +379,7 @@ void kickstart(const Options& opts) {
     : TileG0Host::SharedSizeAB::value;
 #endif
 #if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 26
-  constexpr auto gemm0ExtraC = (mt == flashmoe::MLPMatmulType::gated ? 2 : 0);
+  constexpr auto gemm0ExtraC = (mt == flashmoe::MLPMatmulType::gated ? (bN0 <= 64 ? 2 : 1) : 0);
 #else
   constexpr auto gemm0ExtraC = (mt == flashmoe::MLPMatmulType::gated ? 1 : 0);
 #endif
