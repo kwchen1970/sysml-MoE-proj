@@ -798,14 +798,17 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // NCU5: HYB22 (shared-A reg-gate + drop post-gated sync) + Ampere gated pS=2.
-  // Hypothesis from NCU: L1TEX long_scoreboard ~44% / 87.9% no-eligible — gated pS=1
-  // leaves each K-step's copy exposed; pS=2 overlaps next load (smem still fits 2 blocks/SM).
+  // NCU5: HYB22 + deepen GEMM1 only (pS1=2). Uniform pS=2 dropped occupancy to 1
+  // block/SM on shared-A gated GEMM0 (CTA grid 216→108, mid ~2.6× slower). Keep
+  // pS0=1 for dual-accum GEMM0; attack L1TEX scoreboard on the down-proj.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
-  constexpr auto pS = arch >= 900 ? 3 : arch >= 800 ? 2 : 1;
+  constexpr auto pS0 = arch >= 900 ? 3 : arch >= 800
+    ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
+    : 1;
+  constexpr auto pS1 = arch >= 800 ? 2 : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
   static_assert(bM >= 1);
   if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
@@ -828,38 +831,38 @@ void drive(const int argc, char** argv) {
     switch (E) {
       case 8:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         }
         break;
       case 16:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 16>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 16>(opts);
         }
         break;
       case 32:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 32>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 32>(opts);
         }
         break;
       default:
         if (E % 32 == 0) {
           if (k > 1) {
-            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
             flashmoe::GateReductionLevel::multiBlock, 32>(opts);
           } else {
-            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
             flashmoe::GateReductionLevel::multiBlock, 32>(opts);
           }
         }
