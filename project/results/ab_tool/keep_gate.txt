@@ -1,7 +1,8 @@
 VERDICT KEEP
-primary HYB17 vs HYB2: geo -1.274% (7W/4L/0T over 11 shapes)
+primary HYB17 vs HYB2: geo -1.274% (median -2.080%) (7W/4L/0T over 11 shapes)
+geo leave-one-out range: [-1.813%, -0.812%]
 anchor: 3.8218 vs 3.9039 ms (-2.102%)
 measurement: mean cand CV 2.96% across shapes
 bootstrap identity (HYB17 odd/even): geo +0.939% over 11 shapes; recommend --min-geo-margin-pct 1.41
 extra HYB17 vs BK64: geo -4.696%
-reasons: WARNING geo |-1.274%| < mean cand CV 2.96% (near noise; raise ROUNDS or --min-geo-margin-pct)
+reasons: WARNING geo |-1.274%| < mean cand CV 2.96% (near noise; raise ROUNDS or --min-geo-margin-pct); WARNING leave-one-out geo hi -0.812% fails margin 1% (shape-fragile keep)

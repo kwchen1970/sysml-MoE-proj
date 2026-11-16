@@ -22,7 +22,7 @@ source "$REPO_ENV"
 export NVSHMEM_REMOTE_TRANSPORT=none
 export LD_LIBRARY_PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/25.5/comm_libs/12.9/nccl-2.26/lib:${LD_LIBRARY_PATH:-}
 
-ROUNDS=${ROUNDS:-3}
+ROUNDS=${ROUNDS:-8}
 WARMUP=${WARMUP:-2}
 RUNS=${RUNS:-16}
 TIMEOUT_S=${TIMEOUT_S:-180}

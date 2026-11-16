@@ -32,10 +32,21 @@ ANCHOR = (4096, 2048, 1408, 16, 6)
 ROW_PREFIX_OK = ("BK64,", "HYB", "SCHED,", "CAND,", "EXP,", "A,", "B,")
 
 
+# Hard default: require ≥1% geo win so keeps clear the ~±1% identity floor
+# measured on hyb17-61377792 (odd/even bootstrap). Raise further with
+# --auto-margin or after the dedicated noise study.
+DEFAULT_MIN_GEO_MARGIN_PCT = 1.0
+
+
 def geo_mean(values: list[float]) -> float:
     if not values:
         return float("nan")
     return math.exp(sum(math.log(v) for v in values) / len(values))
+
+
+def geo_delta_pct(values: list[float]) -> float:
+    g = geo_mean(values)
+    return 100.0 * (g - 1.0) if g == g else float("nan")
 
 
 def parse_rows(
@@ -215,6 +226,12 @@ def compare(
             }
         )
     geo = geo_mean(ratios) if ratios else float("nan")
+    deltas = [100.0 * (r - 1.0) for r in ratios]
+    # Leave-one-out geo deltas ≈ cheap CI without numpy.
+    loo = []
+    if len(ratios) >= 3:
+        for i in range(len(ratios)):
+            loo.append(geo_delta_pct(ratios[:i] + ratios[i + 1 :]))
     anchor = next((p for p in per_shape if (p["S"], p["H"], p["I"], p["E"], p["k"]) == ANCHOR), None)
     return {
         "cand": cand,
@@ -222,6 +239,9 @@ def compare(
         "n_shapes": len(per_shape),
         "geo_ratio": geo,
         "geo_delta_pct": 100.0 * (geo - 1.0) if geo == geo else float("nan"),
+        "median_delta_pct": statistics.median(deltas) if deltas else float("nan"),
+        "geo_loo_lo_pct": min(loo) if loo else float("nan"),
+        "geo_loo_hi_pct": max(loo) if loo else float("nan"),
         "wins": sum(1 for p in per_shape if p["delta_pct"] < -1e-9),
         "losses": sum(1 for p in per_shape if p["delta_pct"] > 1e-9),
         "ties": sum(1 for p in per_shape if abs(p["delta_pct"]) <= 1e-9),
@@ -294,6 +314,17 @@ def keep_decision(
         reasons.append(
             f"WARNING geo |{cmp['geo_delta_pct']:.3f}%| < odd/even identity "
             f"|{boot_abs:.3f}%| on {cand}"
+        )
+    loo_hi = cmp.get("geo_loo_hi_pct")
+    if (
+        loo_hi == loo_hi
+        and loo_hi is not None
+        and ok_fast
+        and loo_hi > -min_geo_margin_pct
+    ):
+        reasons.append(
+            f"WARNING leave-one-out geo hi {loo_hi:+.3f}% fails margin "
+            f"{min_geo_margin_pct:g}% (shape-fragile keep)"
         )
 
     keep = bool(ok_correct and ok_fast and ok_anchor)
@@ -422,8 +453,13 @@ def write_outputs(
     lines = [
         f"VERDICT {decision['verdict']}",
         f"primary {cmp['cand']} vs {cmp['base']}: geo {cmp['geo_delta_pct']:+.3f}% "
+        f"(median {cmp.get('median_delta_pct', float('nan')):+.3f}%) "
         f"({cmp['wins']}W/{cmp['losses']}L/{cmp.get('ties', 0)}T over {cmp['n_shapes']} shapes)",
     ]
+    loo_lo = cmp.get("geo_loo_lo_pct")
+    loo_hi = cmp.get("geo_loo_hi_pct")
+    if loo_lo == loo_lo and loo_hi == loo_hi:
+        lines.append(f"geo leave-one-out range: [{loo_lo:+.3f}%, {loo_hi:+.3f}%]")
     if cmp["anchor"]:
         a = cmp["anchor"]
         lines.append(
@@ -456,8 +492,13 @@ def main() -> int:
     p.add_argument(
         "--min-geo-margin-pct",
         type=float,
-        default=0.0,
-        help="Require geo delta_pct <= -margin (default 0: any geo<1)",
+        default=DEFAULT_MIN_GEO_MARGIN_PCT,
+        help=f"Require geo delta_pct <= -margin (default {DEFAULT_MIN_GEO_MARGIN_PCT})",
+    )
+    p.add_argument(
+        "--auto-margin",
+        action="store_true",
+        help="Raise margin to max(default, odd/even bootstrap×1.5 recommendation)",
     )
     p.add_argument(
         "--require-anchor-win",
@@ -495,6 +536,11 @@ def main() -> int:
     primary = compare(stats, args.cand, args.base)
     boot = odd_even_identity_geo(stats, args.cand)
     primary["bootstrap_identity"] = boot
+    margin = args.min_geo_margin_pct
+    if args.auto_margin and boot.get("recommended_min_geo_margin_pct") == boot.get(
+        "recommended_min_geo_margin_pct"
+    ):
+        margin = max(margin, float(boot["recommended_min_geo_margin_pct"]))
     extras = []
     for base in args.also_vs:
         if base in tags and base != args.base:
@@ -516,6 +562,8 @@ def main() -> int:
             "fail_lines": len(fails),
             "abs_geo_delta_pct": abs(primary["geo_delta_pct"]),
             "mean_cv_pct": statistics.mean(cvs) if cvs else float("nan"),
+            "bootstrap_identity": boot,
+            "min_geo_margin_pct": margin,
         }
     else:
         decision = keep_decision(
@@ -524,9 +572,10 @@ def main() -> int:
             fails,
             cand=args.cand,
             error_max=args.error_max,
-            min_geo_margin_pct=args.min_geo_margin_pct,
+            min_geo_margin_pct=margin,
             require_anchor_win=args.require_anchor_win,
         )
+        decision["min_geo_margin_pct"] = margin
 
     write_outputs(args.out, stats, primary, decision, extras, meta, tags)
 

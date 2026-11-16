@@ -1,0 +1,25 @@
+{
+  "updated": "2026-11-15",
+  "basis": {
+    "job": "61377792",
+    "rounds": 5,
+    "mean_cand_cv_pct": 2.96,
+    "odd_even_identity_geo_delta_pct": 0.939,
+    "pending_identity_job": "61378923"
+  },
+  "defaults": {
+    "ROUNDS": 8,
+    "WARMUP": 2,
+    "RUNS": 16,
+    "ERROR_MAX": 0.25,
+    "min_geo_margin_pct": 1.0,
+    "auto_margin_multiplier": 1.5,
+    "keep_base": "HYB17"
+  },
+  "notes": [
+    "KEEP requires geo(cand/HYB17) <= -min_geo_margin_pct and error in band.",
+    "HYB17 vs HYB2 (-1.27%) clears the 1.0% default but fails --auto-margin (~1.41%).",
+    "HYB17 vs BK64 (-4.7%) clears both.",
+    "Other lanes: source ab/tool/scripts/scheduler_ab/lane_env.sh <lane>."
+  ]
+}

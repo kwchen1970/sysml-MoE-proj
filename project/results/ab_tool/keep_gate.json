@@ -59,7 +59,8 @@
     "ok_fast": true,
     "ok_anchor": true,
     "reasons": [
-      "WARNING geo |-1.274%| < mean cand CV 2.96% (near noise; raise ROUNDS or --min-geo-margin-pct)"
+      "WARNING geo |-1.274%| < mean cand CV 2.96% (near noise; raise ROUNDS or --min-geo-margin-pct)",
+      "WARNING leave-one-out geo hi -0.812% fails margin 1% (shape-fragile keep)"
     ],
     "error_violations": 0,
     "fail_lines": 0,
@@ -70,7 +71,8 @@
       "abs_geo_delta_pct": 0.9385333115881078,
       "n_shapes": 11,
       "recommended_min_geo_margin_pct": 1.4077999673821617
-    }
+    },
+    "min_geo_margin_pct": 1.0
   },
   "tags": [
     "BK64",

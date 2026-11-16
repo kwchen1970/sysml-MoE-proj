@@ -33,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --title) TITLE=$2; shift 2 ;;
     --phase) PHASE=$2; shift 2 ;;
     --min-geo-margin-pct) EXTRA_PARSE+=(--min-geo-margin-pct "$2"); shift 2 ;;
+    --auto-margin) EXTRA_PARSE+=(--auto-margin); shift ;;
     --error-max) EXTRA_PARSE+=(--error-max "$2"); shift 2 ;;
     -h|--help)
       sed -n '1,20p' "$0"
