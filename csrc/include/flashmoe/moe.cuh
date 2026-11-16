@@ -79,14 +79,15 @@ namespace flashmoe::moe
     constexpr int bM = bM0;
     using TileG0 = tile::CollectiveMainloop<bM0, bN0, bK0, Config::Arch::value, Element,
       typename Config::AccumType, threads, pSK0>;
-    // Shared-A (bN0<=64): register-gate + direct C — no gateCache slab.
-    // Two-pass gated: stage gate through gmem via copy_fragment — no gateCache.
-    // AB/C sizes come from cublasdx cosize (see tile.cuh); do not add a fake C surcharge.
+    // EPI0b: keep a C-sized gated surcharge (EPI0 bare-cosize still illegal-addressed
+    // like HYB12). Epilogue itself no longer touches gateCache (reg-gate / gmem stage).
     constexpr auto gemm0AB = (mt == MLPMatmulType::gated && bN0 <= 64)
       ? TileG0::SharedSizeABGated::value
       : TileG0::SharedSizeAB::value;
+    constexpr auto gateSlack = (mt == MLPMatmulType::gated)
+      ? TileG0::SharedSizeC::value : 0;
     constexpr auto GEMM0Sz = cutlass::round_up(
-      cute::max(gemm0AB, TileG0::SharedSizeC::value), MAX_ALIGNMENT);
+      cute::max(gemm0AB, TileG0::SharedSizeC::value) + gateSlack, MAX_ALIGNMENT);
     using TileG1 = tile::CollectiveMainloop<bM1, bN1, bK1, Config::Arch::value, Element,
       typename Config::AccumType, threads, pSK1>;
     constexpr auto GEMM1Sz = cutlass::round_up(

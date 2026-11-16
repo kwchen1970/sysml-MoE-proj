@@ -230,9 +230,10 @@ void driver(const int &M, const int &N, const int &K, const float &rtol, const f
   >;
   auto kernel = gk<TileGEMM, Act, Element, ElementC>;
   int bps = 0;
-  // EPI: no gateCache surcharge; AB/C from cosize.
+  // EPI0b: keep C-slab slack even though epilogue stages through gmem.
   constexpr auto totalSharedSize = cutlass::round_up(
-    cute::max(TileGEMM::SharedSizeAB::value, TileGEMM::SharedSizeC::value),
+    cute::max(TileGEMM::SharedSizeAB::value, TileGEMM::SharedSizeC::value)
+      + TileGEMM::SharedSizeC::value,
     TileGEMM::GeneralAlignment::value);
   CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, totalSharedSize));
   CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, totalSharedSize));

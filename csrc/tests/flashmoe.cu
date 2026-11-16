@@ -373,9 +373,12 @@ void kickstart(const Options& opts) {
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
-  // EPI: no gated C-slab surcharge; AB/C from cosize (matches moe::kernelSMEM).
+  // EPI0b: restore gated C-slab slack (EPI0 illegal-addressed without it).
+  constexpr auto gateSlack = (mt == flashmoe::MLPMatmulType::gated)
+    ? TileG0Host::SharedSizeC::value : 0;
   constexpr auto GEMM0Sz = cutlass::round_up(
-    cute::max(gemm0AB, TileG0Host::SharedSizeC::value), flashmoe::MAX_ALIGNMENT);
+    cute::max(gemm0AB, TileG0Host::SharedSizeC::value) + gateSlack,
+    flashmoe::MAX_ALIGNMENT);
   constexpr auto GEMM1Sz = cutlass::round_up(
     cute::max(TileG1Host::SharedSizeAB::value, TileG1Host::SharedSizeC::value),
     flashmoe::MAX_ALIGNMENT);
@@ -794,8 +797,7 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI on HYB17: shared-A register-gate + two-pass gmem gate staging
-  // (copy_fragment); no gateCache slab; AB/C smem from cublasdx cosize.
+  // EPI0b: shared-A register-gate + two-pass gmem staging; keep C-slab smem slack.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
