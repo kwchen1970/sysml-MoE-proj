@@ -89,8 +89,13 @@ namespace flashmoe::moe
       ? TileG0::SharedSizeABGated::value
       : TileG0::SharedSizeAB::value;
 #endif
+#if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 26
+    constexpr auto gemm0ExtraC = (mt == MLPMatmulType::gated ? 2 : 0);
+#else
+    constexpr auto gemm0ExtraC = (mt == MLPMatmulType::gated ? 1 : 0);
+#endif
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
-      + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
+      + gemm0ExtraC * sizeof(Element) * bM * bN0, MAX_ALIGNMENT);
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
       sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
