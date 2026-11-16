@@ -23,19 +23,9 @@ namespace flashmoe
 #endif
   }
 
-  // NCU25: scale fp16x2 / bf16x2 in-register (skip float2 convert round-trip).
-  __device__ __forceinline__
-  __half2 packedLowpScale(const __half2& v, float p) {
-    return __hmul2(v, __floats2half2_rn(p, p));
-  }
-  __device__ __forceinline__
-  __nv_bfloat162 packedLowpScale(const __nv_bfloat162& v, float p) {
-    return __hmul2(v, __floats2bfloat162_rn(p, p));
-  }
-
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
-  // NCU25: SkipGmemLoad uses packedLowpScale for Width==2 atomic path.
+  // NCU26: SkipGmemLoad uses padded row stride (bN+8) matching fGET fused C stores.
   template <
     int bM,
     int bN,
@@ -57,8 +47,9 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
+    constexpr int cLd = SkipGmemLoad ? (bN + 8) : bN;
     __shared__ TPS stIds[bM];
-    using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
+    using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<cLd>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
@@ -81,6 +72,8 @@ namespace flashmoe
       static_assert(cuda::std::is_trivially_copyable_v<VT>);
       constexpr auto vw = VTD::VectorWidth::value;
       constexpr auto vbN = bN / vw;
+      static_assert(cLd % vw == 0);
+      constexpr auto vLd = cLd / vw;
       constexpr auto nElems = vbN * bM;
       const auto actualElems = tileSize * vbN;
       constexpr auto elemsPerThread = nElems / threads;
@@ -90,9 +83,9 @@ namespace flashmoe
                                   cute::make_layout(cute::make_shape(S, vH), cute::LayoutRight{}));
       // we enforce H % bN == 0 cpu-side
       auto tC = cute::local_tile(mC, cute::make_shape(S, cute::Int<vbN>{}), tileCoord);
-      // row major layout
+      // row major layout (NCU26: padded smem row stride when SkipGmemLoad)
       using VSL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<vbN>>,
-                               cute::Stride<cute::Int<vbN>, cute::_1>>;
+                               cute::Stride<cute::Int<vLd>, cute::_1>>;
       const auto vsC = cute::make_tensor(cute::make_smem_ptr(static_cast<const VT*>(workspace)),
                                          VSL{});
       // vector copy results to gmem and call it a day
@@ -151,8 +144,10 @@ namespace flashmoe
 
       constexpr int totalVecWidth = RVD::VectorWidth::value * RAD::Width::value;
       constexpr auto rbN = bN / totalVecWidth;
+      static_assert(cLd % totalVecWidth == 0);
+      constexpr auto rLd = cLd / totalVecWidth;
       using RSL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<rbN>>,
-                               cute::Stride<cute::Int<rbN>, cute::_1>>;
+                               cute::Stride<cute::Int<rLd>, cute::_1>>;
       const auto vsC = cute::make_tensor(cute::make_smem_ptr(static_cast<const RV*>(workspace)),
                                          RSL{});
       // row major output
@@ -174,20 +169,13 @@ namespace flashmoe
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
           if constexpr (RAD::Width::value == 2) {
-            if constexpr (SkipGmemLoad) {
-              // NCU25: fused path — packed lowp mul (no float2 round-trip)
-              for (int j = 0; j < packWidth; ++j) {
-                scaledValue[j] = packedLowpScale(static_cast<RAT>(tokenValue[j]),
-                                                 indexAndScale.probability);
-              }
-            }
-            else {
-              constexpr Converter<float2, RAT> loadOp{};
-              constexpr Converter<RAT, float2> storeOp{};
-              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
-              for (int j = 0; j < packWidth; ++j) {
-                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
-              }
+            constexpr Converter<float2, RAT> loadOp{};
+            constexpr Converter<RAT, float2> storeOp{};
+            // fp16x2 or bf16x2
+            const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+            for (int j = 0; j < packWidth; ++j) {
+              // convert to float2 -> multiply -> convert back
+              scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
             }
           }
           else {
@@ -219,19 +207,13 @@ namespace flashmoe
             RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
             if constexpr (RAD::Width::value == 2) {
-              if constexpr (SkipGmemLoad) {
-                for (int j = 0; j < packWidth; ++j) {
-                  scaledValue[j] = packedLowpScale(static_cast<RAT>(tokenValue[j]),
-                                                   indexAndScale.probability);
-                }
-              }
-              else {
-                constexpr Converter<float2, RAT> loadOp{};
-                constexpr Converter<RAT, float2> storeOp{};
-                const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
-                for (int j = 0; j < packWidth; ++j) {
-                  scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
-                }
+              constexpr Converter<float2, RAT> loadOp{};
+              constexpr Converter<RAT, float2> storeOp{};
+              // fp16x2 or bf16x2
+              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+              for (int j = 0; j < packWidth; ++j) {
+                // convert to float2 -> multiply -> convert back
+                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
               }
             }
             else {
@@ -261,19 +243,13 @@ namespace flashmoe
           const auto tokIdx = indexAndScale.tokenIdx;
           if (idx < actualElems) {
             if constexpr (RAD::Width::value == 2) {
-              if constexpr (SkipGmemLoad) {
-                for (int j = 0; j < packWidth; ++j) {
-                  scaledValue[j] = packedLowpScale(static_cast<RAT>(tokenValue[j]),
-                                                   indexAndScale.probability);
-                }
-              }
-              else {
-                constexpr Converter<float2, RAT> loadOp{};
-                constexpr Converter<RAT, float2> storeOp{};
-                const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
-                for (int j = 0; j < packWidth; ++j) {
-                  scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
-                }
+              constexpr Converter<float2, RAT> loadOp{};
+              constexpr Converter<RAT, float2> storeOp{};
+              // fp16x2 or bf16x2
+              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+              for (int j = 0; j < packWidth; ++j) {
+                // convert to float2 -> multiply -> convert back
+                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
               }
             }
             else {
