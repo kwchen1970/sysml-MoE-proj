@@ -395,8 +395,10 @@ namespace flashmoe::processor
               const auto tileRows = task.tileSize();
               for (uint i = threadIdx.x; i < tileRows; i += threads) {
                 const auto tok = tokenIds[i].tokenIdx;
-                __prefetch_global_l2(
-                  moeOutput + static_cast<size_t>(tok) * static_cast<size_t>(H) + outCol);
+                const auto* __restrict__ dst =
+                  moeOutput + static_cast<size_t>(tok) * static_cast<size_t>(H) + outCol;
+                // sm_80+ L2 prefetch (toolkit may lack __prefetch_global_l2).
+                asm volatile("prefetch.global.L2 [%0];" ::"l"(dst) : "memory");
               }
             }
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
