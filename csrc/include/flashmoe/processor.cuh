@@ -42,11 +42,11 @@ namespace flashmoe::processor
     const auto tileCoord = tile::idx2Coord(M / BM{}, N / BN{}, tileIdx);
     // compute Tile
     constexpr TileGEMM tileMainloop{};
-    tileMainloop(workspace, a, b, accumulator, M, N, K, tileCoord);
-    // gmem -> rmem: prefetch bias
+    // HYB38: issue bias LDG before mainloop so MMA hides it (GEMM1 / vanilla).
     const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
     auto d_frag = cublasdx::make_fragment_like<ElementC>(accumulator.get_results());
     cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accumulator);
+    tileMainloop(workspace, a, b, accumulator, M, N, K, tileCoord);
     // Epilogue
     constexpr Activation act{}; // activation function like relu, etc
     // ElementC -> accum type
