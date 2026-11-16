@@ -369,14 +369,16 @@ void kickstart(const Options& opts) {
 
   const auto roundEC = cute::ceil_div(opts.EC, bM) * bM;
   using TileG0Host = flashmoe::tile::CollectiveMainloop<bM, bN0, bK0, Arch, Element, AccumType, threads, pSK0>;
+  using TileG1Host = flashmoe::tile::CollectiveMainloop<bM, bN1, bK1, Arch, Element, AccumType, threads, pSK1>;
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
-  constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
-    + (mt == flashmoe::MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0),
+  // EPI: no gated C-slab surcharge; AB/C from cosize (matches moe::kernelSMEM).
+  constexpr auto GEMM0Sz = cutlass::round_up(
+    cute::max(gemm0AB, TileG0Host::SharedSizeC::value), flashmoe::MAX_ALIGNMENT);
+  constexpr auto GEMM1Sz = cutlass::round_up(
+    cute::max(TileG1Host::SharedSizeAB::value, TileG1Host::SharedSizeC::value),
     flashmoe::MAX_ALIGNMENT);
-  constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
-    sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
 
   const auto kernelSz = flashmoe::moe::kernelSMEM<Config>(opts.E, opts.EC, world, numLocalExperts, tilesN1);
   int maxSharedMemory = 0;
@@ -792,8 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB17 keep: shared-A (bN0=64, I<4096 && k<=2) and two-pass
-  // both use direct rmem->gmem C store; shared-A keeps gateCache for silu.
+  // EPI on HYB17: shared-A register-gate + two-pass gmem gate staging
+  // (copy_fragment); no gateCache slab; AB/C smem from cublasdx cosize.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;

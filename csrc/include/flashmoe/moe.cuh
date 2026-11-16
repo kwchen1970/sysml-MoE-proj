@@ -79,14 +79,18 @@ namespace flashmoe::moe
     constexpr int bM = bM0;
     using TileG0 = tile::CollectiveMainloop<bM0, bN0, bK0, Config::Arch::value, Element,
       typename Config::AccumType, threads, pSK0>;
-    // Shared-A only for narrow GEMM0 (bN0<=64); wide tiles stay two-pass.
+    // Shared-A (bN0<=64): register-gate + direct C — no gateCache slab.
+    // Two-pass gated: stage gate through gmem via copy_fragment — no gateCache.
+    // AB/C sizes come from cublasdx cosize (see tile.cuh); do not add a fake C surcharge.
     constexpr auto gemm0AB = (mt == MLPMatmulType::gated && bN0 <= 64)
       ? TileG0::SharedSizeABGated::value
       : TileG0::SharedSizeAB::value;
-    constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
-      + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
-    constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
-      sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
+    constexpr auto GEMM0Sz = cutlass::round_up(
+      cute::max(gemm0AB, TileG0::SharedSizeC::value), MAX_ALIGNMENT);
+    using TileG1 = tile::CollectiveMainloop<bM1, bN1, bK1, Config::Arch::value, Element,
+      typename Config::AccumType, threads, pSK1>;
+    constexpr auto GEMM1Sz = cutlass::round_up(
+      cute::max(TileG1::SharedSizeAB::value, TileG1::SharedSizeC::value), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
     const auto OSSz = os::getSharedSize<threads, bM>(world, numLocalExperts, E, EC, tilesN1);
     const auto taskSz = sizeof(Task) * tilesN1;
