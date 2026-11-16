@@ -327,6 +327,7 @@ namespace flashmoe::subscriber
 
           Ingredients ingredients{};
           ingredients.localExpertIdx = myLocalExIdx;
+          ingredients.expertIdx = lXI.expertIndex; // ARCH5: needed for fused GEMM1→combine
           ingredients.taskType = TaskType::GEMM0;
           ingredients.peerIdx = pLI.pe;
           // pad here for compatibility

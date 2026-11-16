@@ -387,20 +387,13 @@ namespace flashmoe::tile
     using Threads = cute::Int<threads>;
     using TileShape = cute::Shape<cute::Int<bM>, cute::Int<bN>, cute::Int<bK>>;
     using GeneralAlignment = cute::Int<cute::max(aAlignment, bAlignment, cAlignment)>;
-    // Size from real cublasdx smem layouts (cosize). Geometric bK*(bM+bN) under-counts
-    // swizzle padding. Add one GeneralAlignment of tail slack: vectorized cp.async can
-    // touch past cosize; EPI0 (no surcharge) still illegal-addressed with bare cosize.
-    using SharedSizeAB = cute::Int<cutlass::round_up(
-      (cublasdx::cosize(BLAS::suggest_layout_smem_a())
-        + cublasdx::cosize(BLAS::suggest_layout_smem_b()))
-      * pipeStages * sizeof(Element) + GeneralAlignment::value, GeneralAlignment::value)>;
-    // Gate+up share A: one A tile and two B tiles per pipeline stage.
+    using SharedSizeAB = cute::Int<cutlass::round_up(bK * pipeStages * (bM + bN) * sizeof(Element), GeneralAlignment::value)>;
+    // Gate+up share A: size from real smem layouts (cosize), not the geometric bound.
     using SharedSizeABGated = cute::Int<cutlass::round_up(
       (cublasdx::cosize(BLAS::suggest_layout_smem_a())
         + 2 * cublasdx::cosize(BLAS::suggest_layout_smem_b()))
-      * pipeStages * sizeof(Element) + GeneralAlignment::value, GeneralAlignment::value)>;
-    using SharedSizeC = cute::Int<cutlass::round_up(
-      cublasdx::cosize(BLAS::suggest_layout_smem_c()) * sizeof(Element), GeneralAlignment::value)>;
+      * pipeStages * sizeof(Element), GeneralAlignment::value)>;
+    using SharedSizeC = cute::Int<cutlass::round_up(bM * bN * sizeof(Element), GeneralAlignment::value)>;
     using CArr = cute::C<cr>;
     using AAlign = cute::Int<aAlignment>;
     using BAlign = cute::Int<bAlignment>;

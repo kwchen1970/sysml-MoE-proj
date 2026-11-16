@@ -12,8 +12,6 @@
 #include "debug.cuh"
 #include "../include/flashmoe/tile.cuh"
 
-// EPI: two-pass gated epilogue stages silu(gate) through the output tile with
-// copy_fragment both ways (no gateCache smem). Matches processor.cuh.
 template<typename TileGEMM, typename Activation, typename ElementC, typename Element>
 __device__ __forceinline__
 void gemmMainloop(cuda::std::byte *__restrict__ const&workspace,
@@ -26,20 +24,28 @@ void gemmMainloop(cuda::std::byte *__restrict__ const&workspace,
                   const typename TileGEMM::AccumType &swishAlpha,
                   const typename TileGEMM::AccumType &swishBeta,
                   const int &M, const int &N, const int &K, const int &tileIdx) {
+  auto *__restrict__ gateCache = workspace + cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
+                                                                         TileGEMM::SharedSizeAB::value),
+                                                               TileGEMM::GeneralAlignment::value);
   using BLAS = TileGEMM::BLAS;
   auto accumulator = BLAS::suggest_accumulator();
   using BM = cute::Int<cublasdx::size_of<BLAS>::m>;
   using BN = cute::Int<cublasdx::size_of<BLAS>::n>;
   const auto tileCoord = flashmoe::tile::idx2Coord(M / BM{}, N / BN{}, tileIdx);
+  // compute gate Tile
   constexpr TileGEMM tileMainloop{};
   tileMainloop(workspace, a, b, accumulator, M, N, K, tileCoord);
   __syncthreads();
+  // gmem -> rmem: load bias
   const auto gD = flashmoe::tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
   auto d_frag = cublasdx::make_fragment_like<ElementC>(accumulator.get_results());
   cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accumulator);
-  constexpr Activation act{};
+  // Epilogue
+  constexpr Activation act{}; // activation function like gelu or swish
   using AccumType = decltype(accumulator)::value_type;
+  // ElementC -> accum type
   constexpr flashmoe::Converter<AccumType, ElementC> loadConv{};
+  // accum type -> ElementC
   constexpr flashmoe::Converter<ElementC, AccumType> storeConv{};
   const auto c_frag = accumulator.get_results();
   constexpr int accum_size = cublasdx::size(c_frag);
@@ -48,24 +54,37 @@ void gemmMainloop(cuda::std::byte *__restrict__ const&workspace,
     const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
     d_frag(i) = storeConv(swishAlpha * act(g));
   }
-  auto gC = flashmoe::tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS> >(c, M, N,
-    cute::select<0, 1>(tileCoord));
-  // Stage activated gate through gmem (fragment ownership, not sC bounce).
-  cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, gC, accumulator);
+  // rmem -> smem, cache gate results
+  // holding in registers otherwise would blow up pressure
+  auto sGate = cublasdx::make_tensor(reinterpret_cast<ElementC *>(gateCache), BLAS::suggest_layout_smem_c());
+  cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sGate, accumulator);
+  // now, compute v tile
   tileMainloop(workspace, a, bV, accumulator, M, N, K, tileCoord);
   auto cv_frag = accumulator.get_results();
   const auto gV = flashmoe::tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
   cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accumulator);
 #pragma unroll
   for (int i = 0; i < accum_size; ++i) {
+    // x = (a @ bV) + biasV
     cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
   }
-  cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gC, d_frag, accumulator);
+  // smem -> rmem, load g
+  __syncthreads();
+  cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sGate, d_frag, accumulator);
 #pragma unroll
   for (int i = 0; i < accum_size; ++i) {
+    // y = x * (act(a @ b))
     d_frag(i) = storeConv(cv_frag(i) * loadConv(d_frag(i)));
   }
-  cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, gC, accumulator);
+  auto gC = flashmoe::tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS> >(c, M, N,
+    cute::select<0, 1>(tileCoord));
+  // rmem -> smem
+  auto sC = cublasdx::make_tensor(reinterpret_cast<ElementC *>(workspace), BLAS::suggest_layout_smem_c());
+  __syncthreads();
+  cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
+  __syncthreads();
+  // smem -> gmem
+  cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
 }
 
 #define SC(T, v) static_cast<T>(v)
@@ -230,11 +249,9 @@ void driver(const int &M, const int &N, const int &K, const float &rtol, const f
   >;
   auto kernel = gk<TileGEMM, Act, Element, ElementC>;
   int bps = 0;
-  // EPI0b: keep C-slab slack even though epilogue stages through gmem.
-  constexpr auto totalSharedSize = cutlass::round_up(
-    cute::max(TileGEMM::SharedSizeAB::value, TileGEMM::SharedSizeC::value)
-      + TileGEMM::SharedSizeC::value,
-    TileGEMM::GeneralAlignment::value);
+  constexpr auto totalSharedSize = cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
+                                                               TileGEMM::SharedSizeAB::value),
+                                                     TileGEMM::GeneralAlignment::value) + TileGEMM::SharedSizeC::value;
   CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, totalSharedSize));
   CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, totalSharedSize));
   int maxSharedMemory = 0;

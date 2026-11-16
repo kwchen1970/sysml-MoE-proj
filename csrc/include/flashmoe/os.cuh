@@ -157,11 +157,14 @@ namespace flashmoe::os
     }
     __syncthreads();
     // Combine tasks
-    // actual amount known a priori
-    for (uint i = threadIdx.x; i < E; i += threads) {
-      const auto eCount = cute::min(eCs[i], EC);
-      const auto eCt = cute::ceil_div(eCount, bM);
-      atomicAdd_block(taskBound, eCt * tilesN1);
+    // ARCH5 NVLINK_ONLY: combine is fused into each GEMM1 CTA — do not schedule
+    // separate combine tasks (preserves full GEMM1 parallelism, steals no GEMM0 time).
+    if constexpr (topo != Topology::NVLINK_ONLY) {
+      for (uint i = threadIdx.x; i < E; i += threads) {
+        const auto eCount = cute::min(eCs[i], EC);
+        const auto eCt = cute::ceil_div(eCount, bM);
+        atomicAdd_block(taskBound, eCt * tilesN1);
+      }
     }
     if (threadIdx.x < subscriberCount) {
       const auto nRows = ecTilesM * E;
@@ -174,6 +177,11 @@ namespace flashmoe::os
           const auto flagIdx = (prefix + threadIdx.x) + (j * subscriberCount);
           if (flagIdx >= ecSignalCount * E) {
             break;
+          }
+          if constexpr (topo == Topology::NVLINK_ONLY) {
+            // ARCH5: GEMM1 owns combine + sense; final subscriber skips these flags.
+            bitset.set(j);
+            continue;
           }
           const auto expertIdx = (flagIdx % nRows) / ecTilesM;
           const bool isRemote = eL[expertIdx].isRemote;
@@ -254,8 +262,12 @@ namespace flashmoe::os
       subscriber::start<topo, subscriberCount, bM, ElementC>(symHeap, args, fSbSL);
     }
     __syncthreads();
-    for (uint i = threadIdx.x; i < bScL; i += threads) {
-      ctx.consumerCombineBitMap[i] = senseBitset[i];
+    // ARCH5 NVLINK: GEMM1 CTAs flip sense directly in ctx.consumerCombineBitMap;
+    // do not clobber with the unused subscriber smem mirror.
+    if constexpr (topo != Topology::NVLINK_ONLY) {
+      for (uint i = threadIdx.x; i < bScL; i += threads) {
+        ctx.consumerCombineBitMap[i] = senseBitset[i];
+      }
     }
     if (!threadIdx.x) {
       // advance for next epoch

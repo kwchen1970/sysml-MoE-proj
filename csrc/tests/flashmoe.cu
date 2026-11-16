@@ -372,11 +372,9 @@ void kickstart(const Options& opts) {
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
-  // EPI11: NCU10-exact geometric GEMM0Sz/GEMM1Sz + gateCacheBytes (see moe.cuh).
-  constexpr auto gateCacheBytes = (mt == flashmoe::MLPMatmulType::gated && bN0 > 64)
-    ? sizeof(Element) * bM * bN0 : 0;
-  constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
-    + gateCacheBytes, flashmoe::MAX_ALIGNMENT);
+  // EPI12: reg-gate on two-pass too → no gateCacheBytes (matches moe.cuh).
+  constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0),
+    flashmoe::MAX_ALIGNMENT);
   constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
     sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
 
@@ -794,8 +792,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI11: restore NCU10 compute recipe; lever = geometric GEMM0Sz/GEMM1Sz + gateCacheBytes.
-  // Bar: beat ARCH6. (EPI10 bK=128 NO_KEEP; NCU15/NCU16 also dead.)
+  // EPI12 on ARCH6 tip: two-pass ElementC reg-gate (drop gateCache). Shared-A
+  // keeps NCU10 pS0=2. Bar: beat ARCH6. (EPI11 geometric-smem-only NO_KEEP.)
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -817,10 +815,10 @@ void drive(const int argc, char** argv) {
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C, auto pS0C, auto pS1C) {
+  auto launch = [&](auto bN0C, auto pS0C) {
     constexpr int bN0 = decltype(bN0C)::value;
     constexpr int pS0 = decltype(pS0C)::value;
-    constexpr int pS1 = decltype(pS1C)::value;
+    constexpr int pS1 = pS; // GEMM1: keep gated default
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
     }
@@ -866,10 +864,9 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // NCU10 shared-A compute: GEMM0 pS=2, GEMM1 pS=1 (smem lever is in moe.cuh).
-    launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<1>{});
+    launch(cute::Int<64>{}, cute::Int<2>{}); // NCU10: deepen shared-A K pipeline
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
   }
 }
 
