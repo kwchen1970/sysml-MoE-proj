@@ -26,11 +26,11 @@ namespace flashmoe
   // NCU25: scale fp16x2 / bf16x2 in-register (skip float2 convert round-trip).
   __device__ __forceinline__
   __half2 packedLowpScale(const __half2& v, float p) {
-    return __hmul2(v, __float2half2_rn(float2{p, p}));
+    return __hmul2(v, __floats2half2_rn(p, p));
   }
   __device__ __forceinline__
   __nv_bfloat162 packedLowpScale(const __nv_bfloat162& v, float p) {
-    return __hmul2(v, __float2bfloat162_rn(float2{p, p}));
+    return __hmul2(v, __floats2bfloat162_rn(p, p));
   }
 
   // MoE combine at tile granularity
