@@ -794,9 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // NCU10: shared-A ElementC reg-gate frees gateCache; spend that smem on
-  // GEMM0 pS=2 (L1TEX pipeline depth) while keeping 2 blocks/SM. Two-pass
-  // stays HYB17 (pS=1 + gateCache). GEMM1 stays pS=1.
+  // NCU11: NCU10 KEEP (−2.2% vs HYB17) + shape-aware pS — deepen shared-A
+  // to pS=2 only when E<=64 (E=128 thrash'd +6.8% with uniform pS=2).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -867,7 +866,12 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{}, cute::Int<2>{}); // NCU10: deepen shared-A K pipeline
+    // NCU11: pS=2 helps mid-E; skip deepen at E=128 (weight thrash).
+    if (E <= 64) {
+      launch(cute::Int<64>{}, cute::Int<2>{});
+    } else {
+      launch(cute::Int<64>{}, cute::Int<1>{});
+    }
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
   }
