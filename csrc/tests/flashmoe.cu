@@ -801,8 +801,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI4: EPI1 epilogue + asymmetric slack; revert uniform pS=2 (EPI3 +6.4%).
-  // GEMM0 stays pS=1 (occupancy); GEMM1-only pS1=2 (NCU5 insight). Bar: HYB17.
+  // EPI5: EPI1 epilogue + asymmetric slack; pS0=pS1=1 (no pS1=2).
+  // Extend shared-A to I<=4096 (was I<4096) to cut two-pass loser. Bar: HYB17.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -810,7 +810,7 @@ void drive(const int argc, char** argv) {
   constexpr auto pS0 = arch >= 900 ? 3 : arch >= 800
     ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1;
-  constexpr auto pS1 = arch >= 900 ? 3 : arch >= 800 ? 2 : 1;
+  constexpr auto pS1 = pS0;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
   static_assert(bM >= 1);
   if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
@@ -824,7 +824,7 @@ void drive(const int argc, char** argv) {
   }
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
-    && I < 4096 && k <= 2);
+    && I <= 4096 && k <= 2);
   auto launch = [&](auto bN0C) {
     constexpr int bN0 = decltype(bN0C)::value;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
