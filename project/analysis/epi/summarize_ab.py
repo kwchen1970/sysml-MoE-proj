@@ -18,7 +18,7 @@ for line in open(path, errors='replace'):
     rows.append(('FAIL', line))
     continue
   parts=line.split(',')
-  if len(parts)>=9 and parts[0] in {'BK64','HYB2','HYB17','EPI0','EPI1','EPI2'} and parts[1].isdigit():
+  if len(parts)>=9 and parts[0] in {'BK64','HYB2','HYB17','HYB22','HYB25','EPI0','EPI0b','EPI1','EPI2'} and parts[1].isdigit():
     tag,r,S,H,I,E,k,ms,err=parts[:9]
     rows.append((tag,int(r),int(S),int(H),int(I),int(E),int(k),float(ms),float(err)))
 
@@ -37,7 +37,7 @@ shapes=sorted({k[1:] for k in by})
 print('tags', tags, 'shapes', len(shapes))
 # per-shape means
 means={k: mean(v) for k,v in by.items()}
-base='HYB17' if any(t=='HYB17' for t in tags) else 'HYB2'
+base='HYB22' if any(t=='HYB22' for t in tags) else ('HYB17' if any(t=='HYB17' for t in tags) else 'HYB2')
 cand=[t for t in tags if t.startswith('EPI')]
 print(f'base={base} candidates={cand}')
 for c in cand:
