@@ -802,7 +802,7 @@ void drive(const int argc, char** argv) {
     throw std::invalid_argument("k must be <= E");
   }
   // EPI8: fold NCU12 — shared-A GEMM0+GEMM1 pS=2; two-pass stays pS=1.
-  // Keep EPI epilogue (two-pass reg-gate, cosize, slack=0). Bar: beat NCU12.
+  // Keep EPI epilogue (two-pass reg-gate, cosize, slack=0). Bar: beat NCU10.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
