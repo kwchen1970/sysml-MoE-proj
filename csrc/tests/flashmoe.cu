@@ -812,49 +812,50 @@ void drive(const int argc, char** argv) {
   if (E != 8 && E != 16 && E != 32 && E % 32 != 0) {
     throw std::invalid_argument("E must be 8, 16, 32, or a multiple of 32 for this benchmark");
   }
-  // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
+  // HYB35: HYB17 shared-A window; two-pass / anchor uses GEMM0+GEMM1 pS=2.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C) {
+  auto launch = [&](auto bN0C, auto pSC) {
     constexpr int bN0 = decltype(bN0C)::value;
+    constexpr int pSx = decltype(pSC)::value;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
     }
     switch (E) {
       case 8:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pSx, bN1, bK1, pSx, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pSx, bN1, bK1, pSx, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         }
         break;
       case 16:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pSx, bN1, bK1, pSx, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 16>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pSx, bN1, bK1, pSx, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 16>(opts);
         }
         break;
       case 32:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pSx, bN1, bK1, pSx, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 32>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pSx, bN1, bK1, pSx, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 32>(opts);
         }
         break;
       default:
         if (E % 32 == 0) {
           if (k > 1) {
-            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+            kickstart<Element, AccumType, arch, bM, bN0, bK0, pSx, bN1, bK1, pSx, flashmoe::CombineMode::plural, act, mt,
             flashmoe::GateReductionLevel::multiBlock, 32>(opts);
           } else {
-            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+            kickstart<Element, AccumType, arch, bM, bN0, bK0, pSx, bN1, bK1, pSx, flashmoe::CombineMode::single, act, mt,
             flashmoe::GateReductionLevel::multiBlock, 32>(opts);
           }
         }
@@ -862,9 +863,11 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{});
+    launch(cute::Int<64>{}, cute::Int<pS>{});
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{});
+    // Two-pass / anchor: deepen both GEMM pipelines (pS=2) without touching shared-A.
+    constexpr int pS2 = arch >= 800 ? 2 : pS;
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS2>{});
   }
 }
 
