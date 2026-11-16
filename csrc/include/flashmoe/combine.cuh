@@ -179,7 +179,9 @@ namespace flashmoe
           const auto tokIdx = indexAndScale.tokenIdx;
           if constexpr (SkipGmemLoad) {
             static_assert(sizeof(RV) == sizeof(RVR));
-            scaledValue = cuda::std::bit_cast<RVR>(tokenValue);
+            for (int j = 0; j < packWidth; ++j) {
+              scaledValue[j] = *reinterpret_cast<const RAT*>(&tokenValue[j]);
+            }
           }
           else if constexpr (RAD::Width::value == 2) {
             constexpr Converter<float2, RAT> loadOp{};
@@ -214,7 +216,9 @@ namespace flashmoe
             const auto tokIdx = indexAndScale.tokenIdx;
             if constexpr (SkipGmemLoad) {
               static_assert(sizeof(RV) == sizeof(RVR));
-              scaledValue = cuda::std::bit_cast<RVR>(tokenValue);
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = *reinterpret_cast<const RAT*>(&tokenValue[j]);
+              }
             }
             else if constexpr (RAD::Width::value == 2) {
               constexpr Converter<float2, RAT> loadOp{};
@@ -251,7 +255,9 @@ namespace flashmoe
           if (idx < actualElems) {
             if constexpr (SkipGmemLoad) {
               static_assert(sizeof(RV) == sizeof(RVR));
-              scaledValue = cuda::std::bit_cast<RVR>(tokenValue);
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = *reinterpret_cast<const RAT*>(&tokenValue[j]);
+              }
             }
             else if constexpr (RAD::Width::value == 2) {
               constexpr Converter<float2, RAT> loadOp{};
