@@ -252,6 +252,9 @@ namespace flashmoe::processor
     __shared__ Task currentTask;
     __shared__ uint globalInterrupt;
     __shared__ uint enqueue;
+    // NCU3: epoch wake so non-owner warps spin on smem instead of parking on
+    // __syncthreads during the doorbell wait (cuts barrier stall / no-eligible).
+    __shared__ uint waitEpoch;
     TQSignal tqs{0U, 0U};
     static_assert(sizeof(TQSignal) == sizeof(uint64_t) && alignof(TQSignal) == alignof(uint64_t));
     static_assert(sizeof(SignalPayload<PacketStage::last>) == sizeof(uint64_t) &&
@@ -259,12 +262,14 @@ namespace flashmoe::processor
     if (!threadIdx.x) {
       globalInterrupt = 0U;
       enqueue = 0U;
+      waitEpoch = 0U;
     }
     __syncthreads();
     using SQT = cuda::std::underlying_type_t<flashmoe::ReadySignal>;
     constexpr auto taskWidth = sizeof(Task) / sizeof(uint4);
     const size_t expertWeightSize = static_cast<size_t>(I) * H;
     static_assert(taskWidth > 0 && taskWidth < WARP_SIZE);
+    uint seenEpoch = 0U;
     while (!tqs.interrupt) {
       FLASHMOE_TRACE_STATE(flashmoe::project_trace::wait);
       if (threadIdx.x / WARP_SIZE == 0) {
@@ -299,8 +304,17 @@ namespace flashmoe::processor
         if (!tqs.interrupt && threadIdx.x < taskWidth) {
           reinterpret_cast<uint4*>(&currentTask)[threadIdx.x] = reinterpret_cast<const uint4*>(gtQ)[threadIdx.x];
         }
+        if (threadIdx.x == 0) {
+          cuda::atomic_ref<uint, cuda::thread_scope_block> ep{waitEpoch};
+          cuda::std::ignore = ep.fetch_add(1U, cuda::memory_order_release);
+        }
+      } else {
+        cuda::atomic_ref<uint, cuda::thread_scope_block> ep{waitEpoch};
+        while (ep.load(cuda::memory_order_acquire) == seenEpoch) {
+        }
       }
       __syncthreads();
+      seenEpoch = waitEpoch;
       tqs.interrupt = globalInterrupt;
       if (!tqs.interrupt) {
         FLASHMOE_TRACE_STATE(flashmoe::project_trace::task,
