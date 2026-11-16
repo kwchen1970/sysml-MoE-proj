@@ -25,7 +25,7 @@ namespace flashmoe
 
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
-  // NCU22: TokensPreStaged=true → caller already filled stIds (e.g. overlapped in fGET epilogue).
+  // NCU23: SkipGmemLoad also skips stIds smem staging — load TPS on demand from gmem (L1).
   template <
     int bM,
     int bN,
@@ -33,7 +33,6 @@ namespace flashmoe
     int threads,
     CombineMode c,
     bool SkipGmemLoad = false,
-    bool TokensPreStaged = false,
     cublasdx::arrangement cArr = cublasdx::row_major,
     typename Element,
     typename TileCoord
@@ -44,33 +43,40 @@ namespace flashmoe
                const TPS* __restrict__ const& tokenIndices, // [bM]
                Element* __restrict__ const& moeOutput, // [S, H] in local HBM
                const Element* __restrict__ const& tokens, // [bM, H] in local HBM (unused if SkipGmemLoad)
-               const uint& tileSize, const TileCoord& tileCoord,
-               TPS* __restrict__ stagedIds = nullptr) {
+               const uint& tileSize, const TileCoord& tileCoord) {
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    static_assert(!TokensPreStaged || SkipGmemLoad, "TokensPreStaged is for the fused SkipGmemLoad path");
-    __shared__ TPS stIdsLocal[bM];
-    TPS* __restrict__ const stIds = TokensPreStaged ? stagedIds : stIdsLocal;
+    __shared__ TPS stIds[bM];
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
-    if constexpr (!TokensPreStaged) {
+    if constexpr (!SkipGmemLoad) {
       for (int i = threadIdx.x; i < bM; i += threads) {
         stIds[i] = tokenIndices[i];
       }
-    }
-    if constexpr (!SkipGmemLoad) {
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
       static_assert(cute::is_compatible<decltype(gC.layout()), decltype(sC.layout())>::value);
       // copy processed tile from gmem -> smem
       cublasdx::copy<threads, ElementAlignment<Element, bN>>(threadIdx.x, gC, sC);
       cublasdx::copy_wait();
+      __syncthreads();
     }
-    // Publishes stIds (unless NCU22 pre-staged + published by fGET); always publishes sC when SkipGmemLoad.
-    __syncthreads();
+    else {
+      // NCU23: publish ARCH6/NCU21 sC only; TPS read on demand below (no stIds fill).
+      __syncthreads();
+    }
+    // Row TPS: smem when staged; gmem/L1 on the fused SkipGmemLoad path.
+    auto loadTPS = [&](int rowIdx) -> TPS {
+      if constexpr (SkipGmemLoad) {
+        return tokenIndices[rowIdx];
+      }
+      else {
+        return stIds[rowIdx];
+      }
+    };
     if constexpr (c == CombineMode::single) {
       using VTD = VectorTypeDescriptor<typename RawType<Element>::type, ElementAlignment<Element, bN>>;
       using VT = VTD::VectorType;
@@ -97,7 +103,7 @@ namespace flashmoe
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / vbN;
           const auto colIdx = idx % vbN;
-          const auto tokenIdx = stIds[rowIdx].tokenIdx;
+          const auto tokenIdx = loadTPS(rowIdx).tokenIdx;
           // smem -> gmem.
           tC(tokenIdx, colIdx) = vsC(rowIdx, colIdx);
         }
@@ -107,7 +113,7 @@ namespace flashmoe
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / vbN;
           const auto colIdx = idx % vbN;
-          const auto tokenIdx = stIds[rowIdx].tokenIdx;
+          const auto tokenIdx = loadTPS(rowIdx).tokenIdx;
           // smem -> gmem.
           if (idx < actualElems) {
             tC(tokenIdx, colIdx) = vsC(rowIdx, colIdx);
@@ -120,7 +126,7 @@ namespace flashmoe
           const auto idx = threadIdx.x + elemsPerThread * threads;
           const auto rowIdx = idx / vbN;
           const auto colIdx = idx % vbN;
-          const auto tokenIdx = stIds[rowIdx].tokenIdx;
+          const auto tokenIdx = loadTPS(rowIdx).tokenIdx;
           // smem -> gmem.
           if (idx < actualElems) {
             tC(tokenIdx, colIdx) = vsC(rowIdx, colIdx);
@@ -165,7 +171,7 @@ namespace flashmoe
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;
-          const auto indexAndScale = stIds[rowIdx];
+          const auto indexAndScale = loadTPS(rowIdx);
           auto tokenValue = vsC(rowIdx, colIdx);
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
@@ -203,7 +209,7 @@ namespace flashmoe
           if (idx < actualElems) {
             const auto rowIdx = idx / rbN;
             const auto colIdx = idx % rbN;
-            const auto indexAndScale = stIds[rowIdx];
+            const auto indexAndScale = loadTPS(rowIdx);
             auto tokenValue = vsC(rowIdx, colIdx);
             RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
@@ -238,7 +244,7 @@ namespace flashmoe
           const auto idx = threadIdx.x + redElemsPerThread * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;
-          const auto indexAndScale = stIds[rowIdx];
+          const auto indexAndScale = loadTPS(rowIdx);
           auto tokenValue = vsC(rowIdx, colIdx);
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
