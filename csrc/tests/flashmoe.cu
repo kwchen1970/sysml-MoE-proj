@@ -394,11 +394,14 @@ void kickstart(const Options& opts) {
   if (kernelTopo == flashmoe::Topology::NVLINK_ONLY) {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::NVLINK_ONLY>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
+    // EPI14 / NCU20: PreferL1 (more L1 for gmem traffic); bit-identical math. Never gated on ARCH6.
+    CHECK_CUDA(cudaFuncSetCacheConfig(kernel, cudaFuncCachePreferL1));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
   else {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::MIXED>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
+    CHECK_CUDA(cudaFuncSetCacheConfig(kernel, cudaFuncCachePreferL1));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
 
@@ -794,8 +797,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI14 on ARCH6 tip: keep EPI13 shared-A (pS0=2,pS1=2); deepen two-pass to pS=2
-  // with gateCache retained (EPI12 reg-gate abandoned — illegalAddress). Bar: ARCH6.
+  // EPI14: ARCH6 tip + PreferL1 cache config (NCU20 never gated on ARCH6).
+  // Abandon EPI13 pS1=2 (MARGINAL) and two-pass pS=2 (HYB49 dead). Keep fused megakernel.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -817,10 +820,10 @@ void drive(const int argc, char** argv) {
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C, auto pS0C, auto pS1C) {
+  auto launch = [&](auto bN0C, auto pS0C) {
     constexpr int bN0 = decltype(bN0C)::value;
     constexpr int pS0 = decltype(pS0C)::value;
-    constexpr int pS1 = decltype(pS1C)::value;
+    constexpr int pS1 = pS; // GEMM1: ARCH6 gated default
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
     }
@@ -866,13 +869,9 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI13: ARCH6 shared-A + deepen GEMM1 pipeline (pS0=2, pS1=2).
-    launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<2>{});
+    launch(cute::Int<64>{}, cute::Int<2>{}); // ARCH6/NCU10: deepen shared-A GEMM0 only
   } else {
-    // EPI14: two-pass pS=2 for gated half on Ampere+; keep ARCH6 gateCache (no reg-gate).
-    constexpr auto pS2pass = (arch >= 800 && mt == flashmoe::MLPMatmulType::gated && sizeof(Element) == 2)
-      ? 2 : pS;
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS2pass>{}, cute::Int<pS2pass>{});
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
   }
 }
 
