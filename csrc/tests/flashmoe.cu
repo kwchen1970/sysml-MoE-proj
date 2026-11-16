@@ -394,11 +394,14 @@ void kickstart(const Options& opts) {
   if (kernelTopo == flashmoe::Topology::NVLINK_ONLY) {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::NVLINK_ONLY>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
+    // HYB54: PreferEqual — balanced L1/shared split (not PreferShared HYB52 / PreferL1).
+    CHECK_CUDA(cudaFuncSetCacheConfig(kernel, cudaFuncCachePreferEqual));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
   else {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::MIXED>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
+    CHECK_CUDA(cudaFuncSetCacheConfig(kernel, cudaFuncCachePreferEqual));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
 
