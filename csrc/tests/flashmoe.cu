@@ -801,16 +801,16 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI3: EPI1 epilogue + asymmetric gate slack (8KiB shared-A / full two-pass)
-  // + Ampere gated pS=2. Bar: beat HYB17.
+  // EPI4: EPI1 epilogue + asymmetric slack; revert uniform pS=2 (EPI3 +6.4%).
+  // GEMM0 stays pS=1 (occupancy); GEMM1-only pS1=2 (NCU5 insight). Bar: HYB17.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
-  // EPI3: Ampere gated pS=2 (prior pS=2 illegal was undersized AB+slack).
-  constexpr auto pS = arch >= 900 ? 3 : arch >= 800
-    ? 2
+  constexpr auto pS0 = arch >= 900 ? 3 : arch >= 800
+    ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1;
+  constexpr auto pS1 = arch >= 900 ? 3 : arch >= 800 ? 2 : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
   static_assert(bM >= 1);
   if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
@@ -833,38 +833,38 @@ void drive(const int argc, char** argv) {
     switch (E) {
       case 8:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         }
         break;
       case 16:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 16>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 16>(opts);
         }
         break;
       case 32:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 32>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 32>(opts);
         }
         break;
       default:
         if (E % 32 == 0) {
           if (k > 1) {
-            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::plural, act, mt,
+            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
             flashmoe::GateReductionLevel::multiBlock, 32>(opts);
           } else {
-            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS, bN1, bK1, pS, flashmoe::CombineMode::single, act, mt,
+            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
             flashmoe::GateReductionLevel::multiBlock, 32>(opts);
           }
         }
