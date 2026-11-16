@@ -80,9 +80,15 @@ namespace flashmoe::moe
     using TileG0 = tile::CollectiveMainloop<bM0, bN0, bK0, Config::Arch::value, Element,
       typename Config::AccumType, threads, pSK0>;
     // Shared-A only for narrow GEMM0 (bN0<=64); wide tiles stay two-pass.
+#if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 18
+    constexpr auto gemm0AB = (mt == MLPMatmulType::gated && bN0 <= 64)
+      ? TileG0::SharedSizeABGated1::value
+      : TileG0::SharedSizeAB::value;
+#else
     constexpr auto gemm0AB = (mt == MLPMatmulType::gated && bN0 <= 64)
       ? TileG0::SharedSizeABGated::value
       : TileG0::SharedSizeAB::value;
+#endif
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
       + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),

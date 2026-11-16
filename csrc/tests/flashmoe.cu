@@ -369,9 +369,15 @@ void kickstart(const Options& opts) {
 
   const auto roundEC = cute::ceil_div(opts.EC, bM) * bM;
   using TileG0Host = flashmoe::tile::CollectiveMainloop<bM, bN0, bK0, Arch, Element, AccumType, threads, pSK0>;
+#if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 18
+  constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
+    ? TileG0Host::SharedSizeABGated1::value
+    : TileG0Host::SharedSizeAB::value;
+#else
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
+#endif
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
     + (mt == flashmoe::MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0),
     flashmoe::MAX_ALIGNMENT);
