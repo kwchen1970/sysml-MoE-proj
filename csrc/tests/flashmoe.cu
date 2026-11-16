@@ -821,7 +821,8 @@ void drive(const int argc, char** argv) {
   auto launch = [&](auto bN0C, auto pS0C) {
     constexpr int bN0 = decltype(bN0C)::value;
     constexpr int pS0 = decltype(pS0C)::value;
-    constexpr int pS1 = pS; // GEMM1: keep gated default
+    // HYB44: deepen GEMM1 pipeline (pS1=2) on Ampere gated; GEMM0 path unchanged.
+    constexpr int pS1 = arch >= 800 ? 2 : pS;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
     }
