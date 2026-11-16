@@ -11,14 +11,15 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PYTHON=${AB_TOOL_PYTHON:-python3}
 JOB_OUT=
 CAND=
-BASE=HYB17
+BASE=HYB22
 OUT_DIR=
 MEDIA_DIR=
-ALSO_VS=(HYB2 BK64)
+ALSO_VS=(HYB17 HYB2 BK64)
 IDENTITY=0
 REQUIRE_ANCHOR=0
 TITLE=
 PHASE=
+AGG=median
 EXTRA_PARSE=()
 
 while [[ $# -gt 0 ]]; do
@@ -32,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --require-anchor-win) REQUIRE_ANCHOR=1; shift ;;
     --title) TITLE=$2; shift 2 ;;
     --phase) PHASE=$2; shift 2 ;;
+    --agg) AGG=$2; shift 2 ;;
     --min-geo-margin-pct) EXTRA_PARSE+=(--min-geo-margin-pct "$2"); shift 2 ;;
     --auto-margin) EXTRA_PARSE+=(--auto-margin); shift ;;
     --require-loo-margin) EXTRA_PARSE+=(--require-loo-margin); shift ;;
@@ -57,7 +59,7 @@ done
 OUT_DIR=${OUT_DIR:-$(mktemp -d /tmp/ab-gate.XXXXXX)}
 TITLE=${TITLE:-"${CAND} vs ${BASE}"}
 
-PARSE_ARGS=(--cand "$CAND" --base "$BASE" --out "$OUT_DIR" --also-vs "${ALSO_VS[@]}")
+PARSE_ARGS=(--cand "$CAND" --base "$BASE" --agg "$AGG" --out "$OUT_DIR" --also-vs "${ALSO_VS[@]}")
 [[ "$IDENTITY" == 1 ]] && PARSE_ARGS+=(--identity)
 [[ "$REQUIRE_ANCHOR" == 1 ]] && PARSE_ARGS+=(--require-anchor-win)
 [[ -n "$PHASE" ]] && PARSE_ARGS+=(--phase "$PHASE")

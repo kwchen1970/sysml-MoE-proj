@@ -1,11 +1,21 @@
 {
   "updated": "2026-11-15",
+  "keep_bar": {
+    "base": "HYB22",
+    "status": "provisional",
+    "branch": "cursor/main-hyb22-keep-378d",
+    "sha": "6bef612",
+    "provisional_job": "61378825",
+    "confirm_job": "61380698",
+    "geo_vs_hyb17_median_pct": -3.67,
+    "prev_base": "HYB17"
+  },
   "basis": {
-    "job": "61377792",
+    "noise_job": "61377792",
     "rounds": 5,
     "mean_cand_cv_pct": 2.96,
     "odd_even_identity_geo_delta_pct": 0.939,
-    "pending_identity_job": "61378923"
+    "pending_identity_job": "61380130"
   },
   "defaults": {
     "ROUNDS": 8,
@@ -13,13 +23,14 @@
     "RUNS": 16,
     "ERROR_MAX": 0.25,
     "min_geo_margin_pct": 1.0,
+    "agg": "median",
     "auto_margin_multiplier": 1.5,
-    "keep_base": "HYB17"
+    "keep_base": "HYB22"
   },
   "notes": [
-    "KEEP requires geo(cand/HYB17) <= -min_geo_margin_pct and error in band.",
-    "HYB17 vs HYB2 (-1.27%) clears the 1.0% default but fails --auto-margin (~1.41%).",
-    "HYB17 vs BK64 (-4.7%) clears both.",
+    "KEEP requires geo(cand/HYB22) <= -min_geo_margin_pct with per-shape median latency, error in band.",
+    "Median agg matches main-lane keep CSVs; mean under-reports HYB22 (≈−2.0% vs −3.7%).",
+    "Promote with project/scripts/scheduler_ab/promote_keep_bar.sh after 61380698 COMPLETED.",
     "Other lanes: source ab/tool/scripts/scheduler_ab/lane_env.sh <lane>."
   ]
 }

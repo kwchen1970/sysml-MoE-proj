@@ -3,7 +3,7 @@
 
 KEEP only if:
   1. correctness: every successful row has error_pct <= error_max
-  2. speed: geo_mean(cand/base) < 1.0  (cand faster than base; default base=HYB17)
+  2. speed: geo_mean(cand/base) beats --min-geo-margin-pct (default base=HYB22, agg=median)
   3. coverage: every shape has means for both cand and base
 
 Also reports geo vs HYB2 / BK64 when those tags are present, plus anchor delta,
@@ -136,7 +136,15 @@ def shape_key(row: dict[str, Any]) -> tuple[int, int, int, int, int]:
     return (row["S"], row["H"], row["I"], row["E"], row["k"])
 
 
-def summarize(rows: list[dict[str, Any]]) -> dict[tuple, dict[str, Any]]:
+def summarize(
+    rows: list[dict[str, Any]],
+    *,
+    agg: str = "median",
+) -> dict[tuple, dict[str, Any]]:
+    """Aggregate per (tag, shape). Default agg=median (matches main-lane keep CSVs;
+    more robust than mean under multi-binary interleaved A/Bs)."""
+    if agg not in {"mean", "median"}:
+        raise ValueError(f"agg must be mean|median, got {agg!r}")
     buckets: dict[tuple, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         if row.get("smoke"):
@@ -150,9 +158,13 @@ def summarize(rows: list[dict[str, Any]]) -> dict[tuple, dict[str, Any]]:
         lats = [v["latency_ms"] for v in vals]
         errs = [v["error_pct"] for v in vals]
         mean = statistics.mean(lats)
+        median = statistics.median(lats)
+        primary = median if agg == "median" else mean
         out[key] = {
             "mean": mean,
-            "median": statistics.median(lats),
+            "median": median,
+            "primary": primary,
+            "agg": agg,
             "lo": min(lats),
             "hi": max(lats),
             "n": len(lats),
@@ -203,7 +215,9 @@ def compare(
     for shape in common:
         c = cand_shapes[shape]
         b = base_shapes[shape]
-        ratio = c["mean"] / b["mean"] if b["mean"] else float("nan")
+        c_ms = c["primary"]
+        b_ms = b["primary"]
+        ratio = c_ms / b_ms if b_ms else float("nan")
         delta_pct = 100.0 * (ratio - 1.0)
         ratios.append(ratio)
         per_shape.append(
@@ -213,8 +227,10 @@ def compare(
                 "I": shape[2],
                 "E": shape[3],
                 "k": shape[4],
-                "cand_ms": c["mean"],
-                "base_ms": b["mean"],
+                "cand_ms": c_ms,
+                "base_ms": b_ms,
+                "cand_mean_ms": c["mean"],
+                "base_mean_ms": b["mean"],
                 "ratio": ratio,
                 "delta_pct": delta_pct,
                 "cand_cv_pct": c["cv_pct"],
@@ -358,6 +374,8 @@ def write_outputs(
     extras: list[dict[str, Any]],
     meta: dict[str, str],
     tags: list[str],
+    *,
+    agg: str = "median",
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -379,11 +397,13 @@ def write_outputs(
             }
             for tag in tags:
                 st = stats.get((tag,) + shape)
-                row[tag] = f"{st['mean']:.6f}" if st else ""
+                row[tag] = f"{st['primary']:.6f}" if st else ""
             c = stats.get((cmp["cand"],) + shape)
             b = stats.get((cmp["base"],) + shape)
-            if c and b and b["mean"]:
-                row[f"d_{cmp['cand']}_vs_{cmp['base']}_pct"] = f"{100.0 * (c['mean']/b['mean'] - 1.0):.3f}"
+            if c and b and b["primary"]:
+                row[f"d_{cmp['cand']}_vs_{cmp['base']}_pct"] = (
+                    f"{100.0 * (c['primary']/b['primary'] - 1.0):.3f}"
+                )
             else:
                 row[f"d_{cmp['cand']}_vs_{cmp['base']}_pct"] = ""
             writer.writerow(row)
@@ -401,6 +421,8 @@ def write_outputs(
                 "k",
                 "mean_ms",
                 "median_ms",
+                "primary_ms",
+                "agg",
                 "lo",
                 "hi",
                 "n",
@@ -421,6 +443,8 @@ def write_outputs(
                     "k": k,
                     "mean_ms": f"{st['mean']:.6f}",
                     "median_ms": f"{st['median']:.6f}",
+                    "primary_ms": f"{st['primary']:.6f}",
+                    "agg": st["agg"],
                     "lo": f"{st['lo']:.6f}",
                     "hi": f"{st['hi']:.6f}",
                     "n": st["n"],
@@ -461,7 +485,7 @@ def write_outputs(
     lines = [
         f"VERDICT {decision['verdict']}",
         f"primary {cmp['cand']} vs {cmp['base']}: geo {cmp['geo_delta_pct']:+.3f}% "
-        f"(median {cmp.get('median_delta_pct', float('nan')):+.3f}%) "
+        f"(per-shape Δ median {cmp.get('median_delta_pct', float('nan')):+.3f}%, agg={agg}) "
         f"({cmp['wins']}W/{cmp['losses']}L/{cmp.get('ties', 0)}T over {cmp['n_shapes']} shapes)",
     ]
     loo_lo = cmp.get("geo_loo_lo_pct")
@@ -494,8 +518,23 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("job_out", type=Path, help="A/B job .out file (or raw CSV with header)")
     p.add_argument("--cand", required=True, help="Candidate tag (must beat --base)")
-    p.add_argument("--base", default="HYB17", help="Baseline tag to beat (default HYB17)")
-    p.add_argument("--also-vs", nargs="*", default=["HYB2", "BK64"], help="Extra baselines to report")
+    p.add_argument(
+        "--base",
+        default="HYB22",
+        help="Baseline tag to beat (default HYB22 provisional bar; was HYB17)",
+    )
+    p.add_argument(
+        "--also-vs",
+        nargs="*",
+        default=["HYB17", "HYB2", "BK64"],
+        help="Extra baselines to report",
+    )
+    p.add_argument(
+        "--agg",
+        choices=("median", "mean"),
+        default="median",
+        help="Per-shape latency aggregate before geo (default median; matches keep CSVs)",
+    )
     p.add_argument("--error-max", type=float, default=0.25, help="Max allowed error_pct for cand")
     p.add_argument(
         "--min-geo-margin-pct",
@@ -537,7 +576,7 @@ def main() -> int:
         print(f"no data rows parsed from {args.job_out}", file=sys.stderr)
         return 2
 
-    stats = summarize(rows)
+    stats = summarize(rows, agg=args.agg)
     tags = sorted({r["tag"] for r in rows})
     if args.cand not in tags:
         print(f"cand tag {args.cand!r} not in {tags}", file=sys.stderr)
@@ -577,6 +616,7 @@ def main() -> int:
             "mean_cv_pct": statistics.mean(cvs) if cvs else float("nan"),
             "bootstrap_identity": boot,
             "min_geo_margin_pct": margin,
+            "agg": args.agg,
         }
     else:
         decision = keep_decision(
@@ -590,8 +630,9 @@ def main() -> int:
             require_loo_margin=args.require_loo_margin,
         )
         decision["min_geo_margin_pct"] = margin
+        decision["agg"] = args.agg
 
-    write_outputs(args.out, stats, primary, decision, extras, meta, tags)
+    write_outputs(args.out, stats, primary, decision, extras, meta, tags, agg=args.agg)
 
     print((args.out / "keep_gate.txt").read_text(), end="")
     print(f"wrote {args.out}/compare.csv keep_gate.json keep_gate.txt shape_stats.csv")

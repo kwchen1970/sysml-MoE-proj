@@ -10,10 +10,11 @@ Lane-safe measurement loop for keep / no-keep decisions.
 | `RUNS` / `WARMUP` | 16 / 2 | same as prior keep jobs |
 | `ERROR_MAX` | 0.25% | correctness band |
 | `--min-geo-margin-pct` | **1.0** | clears ~±1% odd/even identity floor |
-| `--base` | `HYB17` | current keep tip |
+| `--base` | **`HYB22`** | provisional keep tip (confirm job 61380698) |
+| `--agg` | **`median`** | matches main-lane keep CSVs; mean under-reports multi-tag A/Bs |
 | `--auto-margin` | off | raises margin to bootstrap×1.5 (~1.4% on hyb17-61377792) |
 
-`KEEP` requires correct errors, full shape coverage, and geo(cand/base) ≤ −margin%.
+`KEEP` requires correct errors, full shape coverage, and geo(cand/base) ≤ −margin% (per-shape **median** latency by default). See `keep_bar.env`.
 
 ## Paths
 
@@ -36,8 +37,9 @@ source "$SCRIPTS/lane_env.sh" main          # or: ncu | epi | sched | tool
 cp /path/to/cmake-build-release/testFlashMoE "$AB_BINS/testFlashMoE.cand"
 
 BINS="BK64=$AB_BINS/testFlashMoE.bk64 HYB2=$AB_BINS/testFlashMoE.hyb2 \
-HYB17=$AB_BINS/testFlashMoE.hyb17 CAND=$AB_BINS/testFlashMoE.cand" \
-  "$SCRIPTS/submit_ab.sh" --root "$AB_ROOT" --name "${LANE}-cand1" --cand CAND --base HYB17
+HYB17=$AB_BINS/testFlashMoE.hyb17 HYB22=$AB_BINS/testFlashMoE.hyb22 \
+CAND=$AB_BINS/testFlashMoE.cand" \
+  "$SCRIPTS/submit_ab.sh" --root "$AB_ROOT" --name "${LANE}-cand1" --cand CAND --base HYB22
 ```
 
 Or one-shot: `"$SCRIPTS/submit_ab.sh" --lane main --cand CAND ...` (still needs `BINS`).
@@ -47,9 +49,10 @@ Or one-shot: `"$SCRIPTS/submit_ab.sh" --lane main --cand CAND ...` (still needs 
 ```bash
 # From a laptop with the repo worktree / clone:
 project/scripts/scheduler_ab/fetch_job.sh <jobid> \
-  --cand CAND --base HYB17 \
-  --media-dir /path/to/Project/media/${LANE}_cand_vs_hyb17
+  --cand CAND --base HYB22 --agg median \
+  --media-dir /path/to/Project/media/${LANE}_cand_vs_hyb22
 # Add --auto-margin for the stricter bootstrap margin.
+# After confirm: ./promote_keep_bar.sh 61380698
 ```
 
 ## Tool-lane quick keep A/B
@@ -57,8 +60,9 @@ project/scripts/scheduler_ab/fetch_job.sh <jobid> \
 ```bash
 source ./lane_env.sh tool
 export BINS="BK64=$AB_BINS/testFlashMoE.bk64 HYB2=$AB_BINS/testFlashMoE.hyb2 \
-HYB17=$AB_BINS/testFlashMoE.hyb17 CAND=$AB_BINS/testFlashMoE.cand"
-./submit_ab.sh --cand CAND --name tool-cand1 --base HYB17
+HYB17=$AB_BINS/testFlashMoE.hyb17 HYB22=$AB_BINS/testFlashMoE.hyb22 \
+CAND=$AB_BINS/testFlashMoE.cand"
+./submit_ab.sh --cand CAND --name tool-cand1 --base HYB22
 ```
 
 Harness extras vs the old flat `ab_bench.sbatch`:
