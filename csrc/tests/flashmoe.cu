@@ -794,8 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI13 on ARCH6 tip: deepen shared-A GEMM1 pS1=2 (GEMM0 stays pS0=2).
-  // Reverts EPI12 two-pass reg-gate (illegalAddress on wide I / anchor). Bar: ARCH6.
+  // EPI14 on ARCH6 tip: keep EPI13 shared-A (pS0=2,pS1=2); deepen two-pass to pS=2
+  // with gateCache retained (EPI12 reg-gate abandoned — illegalAddress). Bar: ARCH6.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -869,7 +869,10 @@ void drive(const int argc, char** argv) {
     // EPI13: ARCH6 shared-A + deepen GEMM1 pipeline (pS0=2, pS1=2).
     launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<2>{});
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
+    // EPI14: two-pass pS=2 for gated half on Ampere+; keep ARCH6 gateCache (no reg-gate).
+    constexpr auto pS2pass = (arch >= 800 && mt == flashmoe::MLPMatmulType::gated && sizeof(Element) == 2)
+      ? 2 : pS;
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS2pass>{}, cute::Int<pS2pass>{});
   }
 }
 
