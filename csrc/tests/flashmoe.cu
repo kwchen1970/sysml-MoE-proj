@@ -792,9 +792,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB13: HYB2 shared-A (bN0=64, I<4096 && k<=2) + ElementC
-  // register-resident silu(gate) + direct rmem->gmem on shared-A and two-pass.
-  // HYB12 smem-shrink illegal-addressed — keep the C-sized SMEM slack.
+  // Ampere gated HYB14: HYB2 shared-A epilogue unchanged; direct rmem->gmem
+  // only on two-pass (bN0=128) where HYB13 won (large I / anchor).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
