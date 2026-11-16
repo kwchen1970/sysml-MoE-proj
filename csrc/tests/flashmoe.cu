@@ -792,8 +792,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB14 keep: shared-A at bN0=64 for I<4096 && k<=2; two-pass
-  // (bN0=128) uses direct rmem->gmem C store (skip sC).
+  // Ampere gated HYB17 keep: shared-A (bN0=64, I<4096 && k<=2) and two-pass
+  // both use direct rmem->gmem C store; shared-A keeps gateCache for silu.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
