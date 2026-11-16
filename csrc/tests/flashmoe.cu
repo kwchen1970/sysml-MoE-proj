@@ -794,19 +794,20 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // NCU10: shared-A ElementC reg-gate frees gateCache; spend that smem on
-  // GEMM0 pS=2 (L1TEX pipeline depth) while keeping 2 blocks/SM. Two-pass
-  // stays HYB17 (pS=1 + gateCache). GEMM1 stays pS=1.
+  // HYB50 on ARCH6 tip: keep smem-resident fuse + NCU10 eligibility.
+  // Trade shared-A GEMM0 bK0=64/pS0=2 for bK0=128/pS0=1 (NCU15 lever) —
+  // same AB smem budget, fewer gated K-loop syncs. Two-pass stays pS=1/1.
+  // Do NOT deepen two-pass pS (HYB49 NO_KEEP +8.1% vs ARCH6).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
-  constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
+  constexpr int bK0Default = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
-  constexpr int bK1 = bK0;
   constexpr auto pS = arch >= 900 ? 3 : arch >= 800
     ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
   static_assert(bM >= 1);
-  if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
+  // H must divide both NCU10 bK=64 and shared-A bK0=128.
+  if (H <= bK0Default || H % bK0Default != 0 || H % 128 != 0 || H < bN1 || H % bN1 != 0) {
     throw std::invalid_argument("H is invalid");
   }
   if (S < 1 || (S > bM && S % bM != 0)) {
@@ -818,10 +819,12 @@ void drive(const int argc, char** argv) {
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C, auto pS0C) {
+  auto launch = [&](auto bN0C, auto bK0C, auto pS0C, auto bK1C, auto pS1C) {
     constexpr int bN0 = decltype(bN0C)::value;
+    constexpr int bK0 = decltype(bK0C)::value;
     constexpr int pS0 = decltype(pS0C)::value;
-    constexpr int pS1 = pS; // GEMM1: keep gated default
+    constexpr int bK1 = decltype(bK1C)::value;
+    constexpr int pS1 = decltype(pS1C)::value;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
     }
@@ -867,9 +870,12 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{}, cute::Int<2>{}); // NCU10: deepen shared-A K pipeline
+    // HYB50: wider GEMM0 K, single stage; GEMM1 unchanged from ARCH6/NCU10.
+    launch(cute::Int<64>{}, cute::Int<128>{}, cute::Int<1>{}, cute::Int<64>{}, cute::Int<1>{});
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
+    // Two-pass / anchor: leave ARCH6 defaults (bK=64, pS=1/1).
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<bK0Default>{}, cute::Int<pS>{},
+           cute::Int<bK0Default>{}, cute::Int<pS>{});
   }
 }
 
