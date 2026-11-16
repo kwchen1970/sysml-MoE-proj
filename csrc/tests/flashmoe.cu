@@ -394,14 +394,11 @@ void kickstart(const Options& opts) {
   if (kernelTopo == flashmoe::Topology::NVLINK_ONLY) {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::NVLINK_ONLY>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
-    // EPI14 / NCU20: PreferL1 (more L1 for gmem traffic); bit-identical math. Never gated on ARCH6.
-    CHECK_CUDA(cudaFuncSetCacheConfig(kernel, cudaFuncCachePreferL1));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
   else {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::MIXED>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
-    CHECK_CUDA(cudaFuncSetCacheConfig(kernel, cudaFuncCachePreferL1));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
 
@@ -797,8 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI14: ARCH6 tip + PreferL1 cache config (NCU20 never gated on ARCH6).
-  // Abandon EPI13 pS1=2 (MARGINAL) and two-pass pS=2 (HYB49 dead). Keep fused megakernel.
+  // EPI15: ARCH6 tip + extend shared-A to I<=4096 (boundary). PreferL1 abandoned (EPI14 +45%).
+  // Keep fused megakernel; no steal/race; gateCache retained.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -819,7 +816,7 @@ void drive(const int argc, char** argv) {
   }
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
-    && I < 4096 && k <= 2);
+    && I <= 4096 && k <= 2);
   auto launch = [&](auto bN0C, auto pS0C) {
     constexpr int bN0 = decltype(bN0C)::value;
     constexpr int pS0 = decltype(pS0C)::value;
