@@ -25,7 +25,7 @@ namespace flashmoe
 
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
-  // NCU26: SkipGmemLoad uses padded row stride (bN+8) matching fGET fused C stores.
+  // NCU27: SkipGmemLoad stages stIds via 8B vector loads (keeps smem; not on-demand drop).
   template <
     int bM,
     int bN,
@@ -47,15 +47,25 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    constexpr int cLd = SkipGmemLoad ? (bN + 8) : bN;
+    static_assert(sizeof(TPS) == sizeof(unsigned long long) && alignof(TPS) == alignof(unsigned long long));
     __shared__ TPS stIds[bM];
-    using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<cLd>, cute::_1>,
+    using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
-    for (int i = threadIdx.x; i < bM; i += threads) {
-      stIds[i] = tokenIndices[i];
+    if constexpr (SkipGmemLoad) {
+      // NCU27: 8-byte vectorized TPS staging (one TPS per load)
+      auto* __restrict__ dst = reinterpret_cast<unsigned long long*>(stIds);
+      const auto* __restrict__ src = reinterpret_cast<const unsigned long long*>(tokenIndices);
+      for (int i = static_cast<int>(threadIdx.x); i < bM; i += threads) {
+        dst[i] = src[i];
+      }
+    }
+    else {
+      for (int i = threadIdx.x; i < bM; i += threads) {
+        stIds[i] = tokenIndices[i];
+      }
     }
     if constexpr (!SkipGmemLoad) {
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
@@ -72,8 +82,6 @@ namespace flashmoe
       static_assert(cuda::std::is_trivially_copyable_v<VT>);
       constexpr auto vw = VTD::VectorWidth::value;
       constexpr auto vbN = bN / vw;
-      static_assert(cLd % vw == 0);
-      constexpr auto vLd = cLd / vw;
       constexpr auto nElems = vbN * bM;
       const auto actualElems = tileSize * vbN;
       constexpr auto elemsPerThread = nElems / threads;
@@ -83,9 +91,9 @@ namespace flashmoe
                                   cute::make_layout(cute::make_shape(S, vH), cute::LayoutRight{}));
       // we enforce H % bN == 0 cpu-side
       auto tC = cute::local_tile(mC, cute::make_shape(S, cute::Int<vbN>{}), tileCoord);
-      // row major layout (NCU26: padded smem row stride when SkipGmemLoad)
+      // row major layout
       using VSL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<vbN>>,
-                               cute::Stride<cute::Int<vLd>, cute::_1>>;
+                               cute::Stride<cute::Int<vbN>, cute::_1>>;
       const auto vsC = cute::make_tensor(cute::make_smem_ptr(static_cast<const VT*>(workspace)),
                                          VSL{});
       // vector copy results to gmem and call it a day
@@ -144,10 +152,8 @@ namespace flashmoe
 
       constexpr int totalVecWidth = RVD::VectorWidth::value * RAD::Width::value;
       constexpr auto rbN = bN / totalVecWidth;
-      static_assert(cLd % totalVecWidth == 0);
-      constexpr auto rLd = cLd / totalVecWidth;
       using RSL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<rbN>>,
-                               cute::Stride<cute::Int<rLd>, cute::_1>>;
+                               cute::Stride<cute::Int<rbN>, cute::_1>>;
       const auto vsC = cute::make_tensor(cute::make_smem_ptr(static_cast<const RV*>(workspace)),
                                          RSL{});
       // row major output
@@ -160,7 +166,41 @@ namespace flashmoe
       constexpr auto redElemsPerThread = totalElems / threads;
       constexpr int packWidth = RVD::VectorWidth::value;
       if (tileSize == bM) {
-        for (int i = 0; i < redElemsPerThread; ++i) {
+        // NCU27: unroll fused full-tile reduce (known small trip count).
+        if constexpr (SkipGmemLoad) {
+#pragma unroll
+          for (int i = 0; i < redElemsPerThread; ++i) {
+            const auto idx = threadIdx.x + i * threads;
+            const auto rowIdx = idx / rbN;
+            const auto colIdx = idx % rbN;
+            const auto indexAndScale = stIds[rowIdx];
+            auto tokenValue = vsC(rowIdx, colIdx);
+            RVR scaledValue{};
+            const auto tokIdx = indexAndScale.tokenIdx;
+            if constexpr (RAD::Width::value == 2) {
+              constexpr Converter<float2, RAT> loadOp{};
+              constexpr Converter<RAT, float2> storeOp{};
+              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+#pragma unroll
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+              }
+            }
+            else {
+              using AccumType = cuda::std::common_type_t<float, RAT>;
+              constexpr Converter<AccumType, RAT> loadOp{};
+              constexpr Converter<RAT, AccumType> storeOp{};
+#pragma unroll
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
+              }
+            }
+            auto* __restrict__ tCp = (&tC(tokIdx, colIdx * packWidth));
+            constexpr RedAddOp op{};
+            op(tCp, scaledValue);
+          }
+        }
+        else for (int i = 0; i < redElemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;

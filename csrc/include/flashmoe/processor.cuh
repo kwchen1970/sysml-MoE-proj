@@ -61,11 +61,9 @@ namespace flashmoe::processor
     cute::for_each(cute::make_int_sequence<accum_size>{}, [&c_frag, &d_frag](auto i) {
       d_frag(i) = storeConv(act(c_frag(i) + loadConv(d_frag(i))));
     });
-    // rmem -> smem (combine-compatible row-major when !WriteGmem)
-    // NCU26: pad row stride by 8 to cut smem bank conflicts on the fused combine path.
+    // rmem -> smem (combine-compatible dense row-major when !WriteGmem)
     if constexpr (!WriteGmem) {
-      using BNPad = cute::Int<cublasdx::size_of<BLAS>::n + 8>;
-      using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BNPad, cute::_1>>;
+      using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BN, cute::_1>>;
       auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
       __syncthreads();
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);

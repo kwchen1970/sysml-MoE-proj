@@ -87,9 +87,8 @@ namespace flashmoe::moe
       ? sizeof(Element) * bM * bN0 : 0;
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
       + gateCacheBytes, MAX_ALIGNMENT);
-    // NCU26: fused C may use padded row stride (bN+8) for bank-conflict avoidance.
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
-      sizeof(Element) * bM * (bN1 + 8)), MAX_ALIGNMENT);
+      sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
     const auto OSSz = os::getSharedSize<threads, bM>(world, numLocalExperts, E, EC, tilesN1);
     const auto taskSz = sizeof(Task) * tilesN1;
