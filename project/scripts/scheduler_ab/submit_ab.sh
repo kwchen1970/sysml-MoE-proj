@@ -38,6 +38,11 @@ done
 
 : "${BINS:?set BINS=\"TAG=path ...\" before calling submit_ab.sh}"
 
+# Default to more rounds than the old ROUNDS=3 so ~1% keeps clear the noise floor.
+export ROUNDS=${ROUNDS:-5}
+export WARMUP=${WARMUP:-2}
+export RUNS=${RUNS:-16}
+
 mkdir -p "${AB_ROOT}/jobs" "${AB_ROOT}/bins" "${AB_ROOT}/parsed" "${AB_ROOT}/ncu" "${AB_ROOT}/noise"
 
 OUT="${AB_ROOT}/jobs/${NAME}-%j.out"

@@ -38,12 +38,28 @@ def geo_mean(values: list[float]) -> float:
     return math.exp(sum(math.log(v) for v in values) / len(values))
 
 
-def parse_rows(text: str) -> tuple[list[dict[str, Any]], list[str], dict[str, str]]:
+def parse_rows(
+    text: str,
+    *,
+    phase_substr: str | None = None,
+) -> tuple[list[dict[str, Any]], list[str], dict[str, str]]:
     rows: list[dict[str, Any]] = []
     fails: list[str] = []
     meta: dict[str, str] = {}
+    # Optional: restrict to one "==== PHASE ... ====" section (noise study).
+    active = phase_substr is None
     for raw in text.splitlines():
         line = raw.strip()
+        if line.startswith("==== PHASE"):
+            active = phase_substr is None or (phase_substr in line)
+            continue
+        if line.startswith("==== ") and phase_substr is not None:
+            # Closing/other banner ends the active phase.
+            if active and not line.startswith("==== PHASE"):
+                active = False
+            continue
+        if not active:
+            continue
         if line.startswith("META "):
             # META key=value key=value ...
             body = line[5:]
@@ -178,8 +194,9 @@ def compare(
         "n_shapes": len(per_shape),
         "geo_ratio": geo,
         "geo_delta_pct": 100.0 * (geo - 1.0) if geo == geo else float("nan"),
-        "wins": sum(1 for p in per_shape if p["delta_pct"] < 0),
-        "losses": sum(1 for p in per_shape if p["delta_pct"] >= 0),
+        "wins": sum(1 for p in per_shape if p["delta_pct"] < -1e-9),
+        "losses": sum(1 for p in per_shape if p["delta_pct"] > 1e-9),
+        "ties": sum(1 for p in per_shape if abs(p["delta_pct"]) <= 1e-9),
         "anchor": anchor,
         "per_shape": per_shape,
         "missing_cand": sorted(set(base_shapes) - set(cand_shapes)),
@@ -364,7 +381,7 @@ def write_outputs(
     lines = [
         f"VERDICT {decision['verdict']}",
         f"primary {cmp['cand']} vs {cmp['base']}: geo {cmp['geo_delta_pct']:+.3f}% "
-        f"({cmp['wins']}W/{cmp['losses']}L over {cmp['n_shapes']} shapes)",
+        f"({cmp['wins']}W/{cmp['losses']}L/{cmp.get('ties', 0)}T over {cmp['n_shapes']} shapes)",
     ]
     if cmp["anchor"]:
         a = cmp["anchor"]
@@ -404,11 +421,16 @@ def main() -> int:
         action="store_true",
         help="Noise mode: print |geo-1| and mean CV; never KEEP",
     )
+    p.add_argument(
+        "--phase",
+        default=None,
+        help="Only parse rows after an '==== PHASE <substr>' banner (noise study)",
+    )
     p.add_argument("--out", type=Path, required=True, help="Output directory for CSV/JSON/txt")
     args = p.parse_args()
 
     text = args.job_out.read_text(errors="replace")
-    rows, fails, meta = parse_rows(text)
+    rows, fails, meta = parse_rows(text, phase_substr=args.phase)
     if not rows:
         print(f"no data rows parsed from {args.job_out}", file=sys.stderr)
         return 2

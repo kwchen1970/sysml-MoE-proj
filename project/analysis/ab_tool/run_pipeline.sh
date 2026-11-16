@@ -18,6 +18,7 @@ ALSO_VS=(HYB2 BK64)
 IDENTITY=0
 REQUIRE_ANCHOR=0
 TITLE=
+PHASE=
 EXTRA_PARSE=()
 
 while [[ $# -gt 0 ]]; do
@@ -30,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --identity) IDENTITY=1; shift ;;
     --require-anchor-win) REQUIRE_ANCHOR=1; shift ;;
     --title) TITLE=$2; shift 2 ;;
+    --phase) PHASE=$2; shift 2 ;;
     --min-geo-margin-pct) EXTRA_PARSE+=(--min-geo-margin-pct "$2"); shift 2 ;;
     --error-max) EXTRA_PARSE+=(--error-max "$2"); shift 2 ;;
     -h|--help)
@@ -56,6 +58,7 @@ TITLE=${TITLE:-"${CAND} vs ${BASE}"}
 PARSE_ARGS=(--cand "$CAND" --base "$BASE" --out "$OUT_DIR" --also-vs "${ALSO_VS[@]}")
 [[ "$IDENTITY" == 1 ]] && PARSE_ARGS+=(--identity)
 [[ "$REQUIRE_ANCHOR" == 1 ]] && PARSE_ARGS+=(--require-anchor-win)
+[[ -n "$PHASE" ]] && PARSE_ARGS+=(--phase "$PHASE")
 if ((${#EXTRA_PARSE[@]})); then
   PARSE_ARGS+=("${EXTRA_PARSE[@]}")
 fi
