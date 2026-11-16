@@ -149,8 +149,9 @@ namespace flashmoe::os
     auto* __restrict__ eCs = reinterpret_cast<int*>(scratch);
     if (!threadIdx.x) {
       // Expert computation expectant tasks
-      // actual amount unknown a priori, so we use upper bound and self-correct at runtime
-      *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + tilesN1);
+      // ARCH3: GEMM0 is weight-stationary — tilesN0 column tasks per local expert
+      // (not per M-row). GEMM1 still per M-row. Self-correct via sTB at runtime.
+      *taskBound = ctx.nLx * ctx.world * tilesN0 + ctx.nLx * ctx.world * ecTilesM * tilesN1;
     }
     for (uint i = threadIdx.x; i < E; i += threads) {
       eCs[i] = expertCounts[i];

@@ -274,40 +274,34 @@ namespace flashmoe::processor
     constexpr auto taskWidth = sizeof(Task) / sizeof(uint4);
     const size_t expertWeightSize = static_cast<size_t>(I) * H;
     static_assert(taskWidth > 0 && taskWidth < WARP_SIZE);
-    // ARCH3: chain-drain + column-major GEMM0 (subscriber) so the same expert
-    // weight column arrives back-to-back, cutting doorbell bubbles / L1TEX misses
-    // without serializing GEMM1 (ARCH1 lesson) or changing task counts.
-    __shared__ uint chainReady;
-    if (!threadIdx.x) {
-      chainReady = 0U;
-    }
-    __syncthreads();
     while (!tqs.interrupt) {
       FLASHMOE_TRACE_STATE(flashmoe::project_trace::wait);
       if (threadIdx.x / WARP_SIZE == 0) {
         if (threadIdx.x == 0) {
           cuda::atomic_ref<uint64_t, cuda::thread_scope_device> doorbell{*pA.pDB};
+          // await new task from scheduler
           auto payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
-          if (!chainReady || (payload.signal == tqs.signal && payload.interrupt == 0)) {
-            while (payload.signal == tqs.signal && payload.interrupt == 0) {
-              payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
-            }
+          while (payload.signal == tqs.signal && payload.interrupt == 0) {
+            payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
           }
           FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
           if (payload.interrupt) {
+            // we need to clear out our mailbox to ensure it's ready for a subsequent epoch
             constexpr auto TQSZero = cuda::std::bit_cast<uint64_t>(TQSignal{0, 0});
             doorbell.store(TQSZero, cuda::memory_order_relaxed);
           }
           else {
             cuda::atomic_ref<SQT, cuda::thread_scope_device> sqd{*pA.sQ};
+            // Eagerly indicate readiness for the next task
             sqd.store(flashmoe::ready, cuda::memory_order_relaxed);
           }
           globalInterrupt = payload.interrupt;
+          // replace old payload with new one
           tqs = payload;
-          chainReady = 0U;
         }
         __syncwarp();
         auto payload = cuda::std::bit_cast<uint64_t>(tqs);
+        // broadcast new payload from thread 0 to other threads in the warp
         payload = __shfl_sync(0xffffffff, payload, 0);
         tqs = cuda::std::bit_cast<TQSignal>(payload);
         const auto* __restrict__ gtQ = pA.tQ + tqs.decodeSig();
@@ -320,45 +314,64 @@ namespace flashmoe::processor
       if (!tqs.interrupt) {
         FLASHMOE_TRACE_STATE(flashmoe::project_trace::task,
           static_cast<unsigned>(currentTask.getTaskType()), currentTask.tileIdx);
+        // shared -> registers
         switch (const auto task = currentTask; task.getTaskType()) {
         case TaskType::GEMM0: {
+          // ARCH3 weight-stationary: task.tileIdx = N0 column; task.syncIdx = row base;
+          // task.flags = flags+row0. Stream all M-rows so expert B stays hot in L2/L1.
+          constexpr int bM0 = cute::get<0>(typename TileGEMM0::TileShape{});
+          const uint n0 = task.tileIdx;
+          const uint nRows = task.M() / static_cast<uint>(bM0);
+          if (nRows == 0) {
+            break;
+          }
           const auto* aP = reinterpret_cast<const Element*>(task.aData);
           const auto* bP = expertUpWeights + expertWeightSize * task.localExpertIdx();
           auto* __restrict__ cP = reinterpret_cast<Element*>(task.cData[0]);
           const auto* __restrict__ biasP = biasUp + static_cast<size_t>(I) * task.localExpertIdx();
-          if constexpr (mt == MLPMatmulType::vanilla) {
-            fGET<TileGEMM0, Activation>(workspace, aP, bP, cP, biasP, task.M(), I, H, task.tileIdx);
-          }
-          else {
-            const auto* bPv = expertUpVWeights + expertWeightSize * task.localExpertIdx();
-            const auto* __restrict__ biasPv = biasUpV + static_cast<size_t>(I) * task.localExpertIdx();
-            fGET_gated<TileGEMM0, Activation>(workspace, aP, bP, bPv, cP, biasP, biasPv,
-              swishAlpha, swishBeta, task.M(), I, H, task.tileIdx);
-          }
-          __syncthreads();
-          if (!threadIdx.x) {
-            cuda::atomic_ref<uint, cuda::thread_scope_device> tileSync{*(pA.tQS + task.syncIdx)};
-            const auto isLast = tileSync.fetch_add(1, cuda::memory_order_acq_rel) + 1 == tilesN0;
-            enqueue = isLast;
-            if (isLast && (topo == Topology::NVLINK_ONLY || !task.isPeerRemote())) {
-              // clear the counter as it would no longer be used in this epoch
-              tileSync.store(0, cuda::memory_order_relaxed);
-            }
-          }
-          __syncthreads();
-          if (enqueue) {
-            const auto offset = tilesN1 * (task.tileIdx / tilesN0);
-            auto* __restrict__ tQ = pA.ptQ + (task.syncIdx * tilesN1);
-            if (topo == Topology::MIXED && task.isPeerRemote()) {
-              notifyNext<PeerConnectivity::remote, threads>(workspace, task, tQ, tilesN1, flagColStride,
-                offset, pA.tQH);
+          for (uint row = 0; row < nRows; ++row) {
+            const auto tileIdx = row * tilesN0 + n0;
+            if constexpr (mt == MLPMatmulType::vanilla) {
+              fGET<TileGEMM0, Activation>(workspace, aP, bP, cP, biasP, task.M(), I, H, tileIdx);
             }
             else {
-              notifyNext<PeerConnectivity::p2p, threads>(workspace, task, tQ, tilesN1, flagColStride,
-                offset, pA.tQH);
+              const auto* bPv = expertUpVWeights + expertWeightSize * task.localExpertIdx();
+              const auto* __restrict__ biasPv = biasUpV + static_cast<size_t>(I) * task.localExpertIdx();
+              fGET_gated<TileGEMM0, Activation>(workspace, aP, bP, bPv, cP, biasP, biasPv,
+                swishAlpha, swishBeta, task.M(), I, H, tileIdx);
             }
+            __syncthreads();
+            if (!threadIdx.x) {
+              cuda::atomic_ref<uint, cuda::thread_scope_device> tileSync{*(pA.tQS + task.syncIdx + row)};
+              const auto isLast = tileSync.fetch_add(1, cuda::memory_order_acq_rel) + 1 == tilesN0;
+              enqueue = isLast;
+              if (isLast && (topo == Topology::NVLINK_ONLY || !task.isPeerRemote())) {
+                tileSync.store(0, cuda::memory_order_relaxed);
+              }
+            }
+            __syncthreads();
+            if (enqueue) {
+              // Build a per-row view for notifyNext (flags/syncIdx/tileIdx for this row).
+              Task rowTask = task;
+              rowTask.syncIdx = task.syncIdx + row;
+              rowTask.tileIdx = tileIdx;
+              rowTask.flags = task.flags + row;
+              rowTask.ingredients.tileSize = (row + 1 == nRows)
+                ? task.tileSize()
+                : static_cast<uint16_t>(bM0);
+              const auto offset = tilesN1 * row;
+              auto* __restrict__ tQ = pA.ptQ + (rowTask.syncIdx * tilesN1);
+              if (topo == Topology::MIXED && task.isPeerRemote()) {
+                notifyNext<PeerConnectivity::remote, threads>(workspace, rowTask, tQ, tilesN1,
+                  flagColStride, offset, pA.tQH);
+              }
+              else {
+                notifyNext<PeerConnectivity::p2p, threads>(workspace, rowTask, tQ, tilesN1,
+                  flagColStride, offset, pA.tQH);
+              }
+            }
+            __syncthreads();
           }
-          __syncthreads();
         }
         break;
         case TaskType::GEMM1: {
@@ -444,14 +457,6 @@ namespace flashmoe::processor
         __syncthreads(); // trace boundary includes completion by all task threads
         FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
 #endif
-        // ARCH3 chain peek: skip blocking wait if successor doorbell already posted.
-        __syncthreads();
-        if (!threadIdx.x) {
-          cuda::atomic_ref<uint64_t, cuda::thread_scope_device> doorbell{*pA.pDB};
-          const auto peek = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
-          chainReady = (peek.signal != tqs.signal || peek.interrupt != 0) ? 1U : 0U;
-        }
-        __syncthreads();
       }
     }
     FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
