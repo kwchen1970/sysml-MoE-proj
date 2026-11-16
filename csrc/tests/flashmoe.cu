@@ -792,8 +792,7 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB16: HYB14 two-pass direct-gmem + extend shared-A through
-  // I<=4096 inclusive (HYB15's I<=8192 hurt I=8192; I=4096 helped).
+  // Ampere gated HYB14: two-pass direct-gmem; shared-A I<4096 && k<=2.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -812,9 +811,9 @@ void drive(const int argc, char** argv) {
   if (E != 8 && E != 16 && E != 32 && E % 32 != 0) {
     throw std::invalid_argument("E must be 8, 16, 32, or a multiple of 32 for this benchmark");
   }
-  // Include I==4096 in shared-A; leave I>4096 on two-pass+direct-gmem.
+  // Shared-A helps mid-I k=2; k=6 anchor and I>=4096 stay two-pass+direct-gmem.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
-    && I <= 4096 && k <= 2);
+    && I < 4096 && k <= 2);
   auto launch = [&](auto bN0C) {
     constexpr int bN0 = decltype(bN0C)::value;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
