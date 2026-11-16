@@ -369,22 +369,11 @@ void kickstart(const Options& opts) {
 
   const auto roundEC = cute::ceil_div(opts.EC, bM) * bM;
   using TileG0Host = flashmoe::tile::CollectiveMainloop<bM, bN0, bK0, Arch, Element, AccumType, threads, pSK0>;
-#if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 18
-  constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
-    ? TileG0Host::SharedSizeABGated1::value
-    : TileG0Host::SharedSizeAB::value;
-#else
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
-#endif
-#if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 26
-  constexpr auto gemm0ExtraC = (mt == flashmoe::MLPMatmulType::gated ? (bN0 <= 64 ? 2 : 1) : 0);
-#else
-  constexpr auto gemm0ExtraC = (mt == flashmoe::MLPMatmulType::gated ? 1 : 0);
-#endif
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
-    + gemm0ExtraC * sizeof(Element) * bM * bN0,
+    + (mt == flashmoe::MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0),
     flashmoe::MAX_ALIGNMENT);
   constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
     sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
@@ -803,8 +792,7 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // NCU6: HYB22 (shared-A reg-gate + drop post-gated sync) + bias smem prefetch
-  // before mainloop (variant 26). Reverts NCU5 pS1=2 (flat/+0.29% vs HYB17).
+  // NCU7: HYB17 + register bias prefetch before mainloop (no extra smem).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;

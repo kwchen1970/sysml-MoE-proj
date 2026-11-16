@@ -80,23 +80,11 @@ namespace flashmoe::moe
     using TileG0 = tile::CollectiveMainloop<bM0, bN0, bK0, Config::Arch::value, Element,
       typename Config::AccumType, threads, pSK0>;
     // Shared-A only for narrow GEMM0 (bN0<=64); wide tiles stay two-pass.
-#if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 18
-    constexpr auto gemm0AB = (mt == MLPMatmulType::gated && bN0 <= 64)
-      ? TileG0::SharedSizeABGated1::value
-      : TileG0::SharedSizeAB::value;
-#else
     constexpr auto gemm0AB = (mt == MLPMatmulType::gated && bN0 <= 64)
       ? TileG0::SharedSizeABGated::value
       : TileG0::SharedSizeAB::value;
-#endif
-#if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 26
-    // Two bias slabs only on shared-A (bN0<=64); wide two-pass stays one C (occupancy).
-    constexpr auto gemm0ExtraC = (mt == MLPMatmulType::gated ? (bN0 <= 64 ? 2 : 1) : 0);
-#else
-    constexpr auto gemm0ExtraC = (mt == MLPMatmulType::gated ? 1 : 0);
-#endif
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
-      + gemm0ExtraC * sizeof(Element) * bM * bN0, MAX_ALIGNMENT);
+      + (mt == MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0), MAX_ALIGNMENT);
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
       sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
