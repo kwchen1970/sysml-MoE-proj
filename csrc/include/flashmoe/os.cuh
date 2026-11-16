@@ -150,7 +150,7 @@ namespace flashmoe::os
     if (!threadIdx.x) {
       // Expert computation expectant tasks
       // actual amount unknown a priori, so we use upper bound and self-correct at runtime.
-      // ARCH1 (NVLINK_ONLY): GEMM1 is fused into the GEMM0-closing CTA, so the
+      // ARCH2 (NVLINK_ONLY): GEMM1 drains via processor work-steal, so the
       // scheduler only sees GEMM0 (+ combine below). MIXED keeps GEMM1 queued.
       if constexpr (topo == Topology::NVLINK_ONLY) {
         *taskBound = ctx.nLx * ctx.world * ecTilesM * tilesN0;
@@ -246,8 +246,11 @@ namespace flashmoe::os
       auto* __restrict__ gtQHeads = ctx.gTqHeads;
       auto* __restrict__ sQ = ctx.statusQueue;
       auto* pDB = ctx.tqs;
+      // ARCH2: hide GEMM1 global queues from the scheduler on NVLINK_ONLY
+      // (processors steal via gTqHeads/tileSync instead of doorbell dispatch).
+      const auto schedGtQCl = (topo == Topology::NVLINK_ONLY) ? 0u : gtQCl;
       scheduler::start<subscriberCount, pss>(interruptScratch, schedulerBitSet, processors, ctx.processors_v, tilesN1,
-      sO, gtQCl, interrupt, tQHeads, gtQHeads, taskBound, rQ, sQ, pDB, ctx.tQ,
+      sO, schedGtQCl, interrupt, tQHeads, gtQHeads, taskBound, rQ, sQ, pDB, ctx.tQ,
       static_cast<uint>(ctx.nLx), static_cast<uint>(ecTilesM));
     }
     else {
