@@ -131,21 +131,22 @@ namespace flashmoe::subscriber
       auto* rcData = sHeap + heap.advanceOffset<1, 1>(args.epRank, ingredients.localExpertIdx);
       auto* intraStaging = sHeap + heap.advanceOffset<1, 0>(peer, ingredients.localExpertIdx);
       taskResults[1] = p == PeerConnectivity::remote ? intraStaging : rcData;
-      // ARCH2: emit 2-wide GEMM0 tasks (pair consecutive N0 tiles of a row).
-      // Halves doorbell round-trips for GEMM0 while keeping GEMM1 scheduler-parallel.
-      const auto pairedN0 = (args.tilesN0 + 1U) / 2U;
-      const auto wT = fTilesM * pairedN0;
+      // ARCH3: column-major GEMM0 emission (all M-rows of n0, then next n0).
+      // Preserves tileIdx encoding (row*tilesN0+n0) and task counts / accounting,
+      // but feeds the same expert weight column to CTAs back-to-back so the
+      // processor can keep B resident across chained doorbell tasks.
+      const auto wT = fTilesM * args.tilesN0;
       const auto fS = wT / WARP_SIZE + (laneId < wT % WARP_SIZE);
-      const auto rT = pairedN0 % WARP_SIZE;
-      const auto lS = pairedN0 / WARP_SIZE + (rT > 0 ? laneId < rT : 0);
+      const auto rT = args.tilesN0 % WARP_SIZE;
+      const auto lS = args.tilesN0 / WARP_SIZE + (rT > 0 ? laneId < rT : 0);
       const auto tSlice = fS + (routedTokens % bM == 0 ? 0 : lS);
+      const auto mStride = fTilesM > 0 ? fTilesM : 1U;
 
       for (int i = 0; i < fS; ++i) {
-        const auto pairIdx = laneId + i * WARP_SIZE;
-        const auto rowIdx = pairIdx / pairedN0;
-        const auto nPair = pairIdx % pairedN0;
-        // tileIdx = first N0 column of the pair; processor also runs tileIdx+1 when in-range.
-        const auto tileIdx = rowIdx * args.tilesN0 + (nPair * 2U);
+        const auto linear = laneId + i * WARP_SIZE;
+        const auto n0 = linear / mStride;
+        const auto rowIdx = linear % mStride;
+        const auto tileIdx = rowIdx * args.tilesN0 + n0;
         const auto syncIdx = sO + rowIdx;
         ingredients.tileSize = bM;
         args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, i)] = Task{
@@ -153,12 +154,10 @@ namespace flashmoe::subscriber
         };
       }
 
-      // residue M-row
+      // residue tile — keep row-major for the fringe row (rare relative to full tiles)
       if (const auto residue = routedTokens - fTilesM * bM; residue) {
         for (uint j = 0; j < lS; j++) {
-          const auto pairIdx = fTilesM * pairedN0 + laneId + j * WARP_SIZE;
-          const auto nPair = pairIdx % pairedN0;
-          const auto tileIdx = fTilesM * args.tilesN0 + (nPair * 2U);
+          const auto tileIdx = fTilesM * args.tilesN0 + laneId + j * WARP_SIZE;
           const auto syncIdx = sO + fTilesM;
           ingredients.tileSize = static_cast<uint16_t>(residue);
           args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, fS + j)] = Task{
@@ -215,12 +214,10 @@ namespace flashmoe::subscriber
   };
 
   // Self-correct Termination Bound
-  // ARCH2: GEMM0 expectant work is ceil(tilesN0/2) per row (2-wide tasks).
   __device__ __forceinline__
   void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0) {
     if (!atomicTAS<cuda::thread_scope_block>(args.status + peer)) {
-      const auto gemm0TasksPerRow = (args.tilesN0 + 1U) / 2U;
-      const auto superfluous = (gemm0TasksPerRow + args.tilesN1) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
+      const auto superfluous = (args.tilesN0 + args.tilesN1) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
       atomicSub_block(args.taskCount, superfluous);
     }
   }

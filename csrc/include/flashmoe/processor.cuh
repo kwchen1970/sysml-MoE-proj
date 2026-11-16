@@ -274,11 +274,9 @@ namespace flashmoe::processor
     constexpr auto taskWidth = sizeof(Task) / sizeof(uint4);
     const size_t expertWeightSize = static_cast<size_t>(I) * H;
     static_assert(taskWidth > 0 && taskWidth < WARP_SIZE);
-    // ARCH2: chain-drain processor event loop.
-    // Scheduler already posts the next doorbell eagerly (sQ=ready before we finish).
-    // After each task, immediately consume any already-posted successor instead of
-    // re-entering a blocking wait — cuts no-eligible bubbles between back-to-back
-    // assigns without changing GEMM0/GEMM1 task parallelism (ARCH1 lesson).
+    // ARCH3: chain-drain + column-major GEMM0 (subscriber) so the same expert
+    // weight column arrives back-to-back, cutting doorbell bubbles / L1TEX misses
+    // without serializing GEMM1 (ARCH1 lesson) or changing task counts.
     __shared__ uint chainReady;
     if (!threadIdx.x) {
       chainReady = 0U;
@@ -290,7 +288,6 @@ namespace flashmoe::processor
         if (threadIdx.x == 0) {
           cuda::atomic_ref<uint64_t, cuda::thread_scope_device> doorbell{*pA.pDB};
           auto payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
-          // Chain hit only if a successor is already visible; otherwise block as usual.
           if (!chainReady || (payload.signal == tqs.signal && payload.interrupt == 0)) {
             while (payload.signal == tqs.signal && payload.interrupt == 0) {
               payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
@@ -303,7 +300,6 @@ namespace flashmoe::processor
           }
           else {
             cuda::atomic_ref<SQT, cuda::thread_scope_device> sqd{*pA.sQ};
-            // Eagerly indicate readiness for the next task
             sqd.store(flashmoe::ready, cuda::memory_order_relaxed);
           }
           globalInterrupt = payload.interrupt;
@@ -330,27 +326,22 @@ namespace flashmoe::processor
           const auto* bP = expertUpWeights + expertWeightSize * task.localExpertIdx();
           auto* __restrict__ cP = reinterpret_cast<Element*>(task.cData[0]);
           const auto* __restrict__ biasP = biasUp + static_cast<size_t>(I) * task.localExpertIdx();
-          // ARCH2: 2-wide GEMM0 — one doorbell runs this N0 tile and the next when in-row.
-          const uint n0 = task.tileIdx % tilesN0;
-          const uint pairWidth = (n0 + 1U < tilesN0) ? 2U : 1U;
-          for (uint p = 0; p < pairWidth; ++p) {
-            const auto tileIdx = task.tileIdx + p;
-            if constexpr (mt == MLPMatmulType::vanilla) {
-              fGET<TileGEMM0, Activation>(workspace, aP, bP, cP, biasP, task.M(), I, H, tileIdx);
-            }
-            else {
-              const auto* bPv = expertUpVWeights + expertWeightSize * task.localExpertIdx();
-              const auto* __restrict__ biasPv = biasUpV + static_cast<size_t>(I) * task.localExpertIdx();
-              fGET_gated<TileGEMM0, Activation>(workspace, aP, bP, bPv, cP, biasP, biasPv,
-                swishAlpha, swishBeta, task.M(), I, H, tileIdx);
-            }
-            __syncthreads();
+          if constexpr (mt == MLPMatmulType::vanilla) {
+            fGET<TileGEMM0, Activation>(workspace, aP, bP, cP, biasP, task.M(), I, H, task.tileIdx);
           }
+          else {
+            const auto* bPv = expertUpVWeights + expertWeightSize * task.localExpertIdx();
+            const auto* __restrict__ biasPv = biasUpV + static_cast<size_t>(I) * task.localExpertIdx();
+            fGET_gated<TileGEMM0, Activation>(workspace, aP, bP, bPv, cP, biasP, biasPv,
+              swishAlpha, swishBeta, task.M(), I, H, task.tileIdx);
+          }
+          __syncthreads();
           if (!threadIdx.x) {
             cuda::atomic_ref<uint, cuda::thread_scope_device> tileSync{*(pA.tQS + task.syncIdx)};
-            const auto isLast = tileSync.fetch_add(pairWidth, cuda::memory_order_acq_rel) + pairWidth == tilesN0;
+            const auto isLast = tileSync.fetch_add(1, cuda::memory_order_acq_rel) + 1 == tilesN0;
             enqueue = isLast;
             if (isLast && (topo == Topology::NVLINK_ONLY || !task.isPeerRemote())) {
+              // clear the counter as it would no longer be used in this epoch
               tileSync.store(0, cuda::memory_order_relaxed);
             }
           }
@@ -453,8 +444,7 @@ namespace flashmoe::processor
         __syncthreads(); // trace boundary includes completion by all task threads
         FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
 #endif
-        // ARCH2 chain peek: if the scheduler already posted our next doorbell
-        // (possible because we set sQ=ready before this task), skip the blocking wait.
+        // ARCH3 chain peek: skip blocking wait if successor doorbell already posted.
         __syncthreads();
         if (!threadIdx.x) {
           cuda::atomic_ref<uint64_t, cuda::thread_scope_device> doorbell{*pA.pDB};
