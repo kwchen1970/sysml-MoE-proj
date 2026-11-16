@@ -109,6 +109,19 @@ namespace flashmoe::processor
           abBytes), TileGEMM::GeneralAlignment::value);
       auto accGate = BLAS::suggest_accumulator();
       auto accUp = BLAS::suggest_accumulator();
+#if FLASHMOE_HYB_VARIANT == 24
+      // Prefetch gate+up biases into the gateCache slab before the mainloop.
+      auto sBiasG = cublasdx::make_tensor(reinterpret_cast<ElementC*>(gateCache), BLAS::suggest_layout_smem_c());
+      auto sBiasV = cublasdx::make_tensor(
+        reinterpret_cast<ElementC*>(gateCache + TileGEMM::SharedSizeC::value), BLAS::suggest_layout_smem_c());
+      {
+        const auto gD0 = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
+        const auto gV0 = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
+        cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(gD0, sBiasG);
+        cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(gV0, sBiasV);
+      }
+      __syncthreads();
+#endif
 #if FLASHMOE_HYB_VARIANT == 18
       tileMainloop.gatedSeqB(workspace, a, b, bV, accGate, accUp, M, N, K, tileCoord);
 #else
@@ -117,12 +130,17 @@ namespace flashmoe::processor
 #if FLASHMOE_HYB_VARIANT != 21 && FLASHMOE_HYB_VARIANT != 22
       __syncthreads();
 #endif
+#if FLASHMOE_HYB_VARIANT == 24
+      auto d_frag = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sBiasG, d_frag, accGate);
+#else
       const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
       auto d_frag = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accGate);
+#endif
       const auto c_frag = accGate.get_results();
       constexpr int accum_size = cublasdx::size(c_frag);
-#if FLASHMOE_HYB_VARIANT == 19 || FLASHMOE_HYB_VARIANT == 22 || FLASHMOE_HYB_VARIANT == 23
+#if FLASHMOE_HYB_VARIANT == 19 || FLASHMOE_HYB_VARIANT == 22 || FLASHMOE_HYB_VARIANT == 23 || FLASHMOE_HYB_VARIANT == 24
       // ElementC register-resident silu(gate); keep AB+C smem sizing slack (HYB4 drop failed).
       auto gate_act = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
@@ -130,8 +148,12 @@ namespace flashmoe::processor
         gate_act(i) = storeConv(swishAlpha * act(g));
       });
       auto cv_frag = accUp.get_results();
+#if FLASHMOE_HYB_VARIANT == 24
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sBiasV, d_frag, accUp);
+#else
       const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accUp);
+#endif
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
         cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
       });
