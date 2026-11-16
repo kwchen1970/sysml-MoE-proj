@@ -37,7 +37,7 @@ shapes=sorted({k[1:] for k in by})
 print('tags', tags, 'shapes', len(shapes))
 # per-shape means
 means={k: mean(v) for k,v in by.items()}
-base='HYB22' if any(t=='HYB22' for t in tags) else ('HYB17' if any(t=='HYB17' for t in tags) else 'HYB2')
+base='HYB17' if any(t=='HYB17' for t in tags) else ('HYB22' if any(t=='HYB22' for t in tags) else 'HYB2')
 cand=[t for t in tags if t.startswith('EPI')]
 print(f'base={base} candidates={cand}')
 for c in cand:
