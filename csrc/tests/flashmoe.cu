@@ -394,11 +394,14 @@ void kickstart(const Options& opts) {
   if (kernelTopo == flashmoe::Topology::NVLINK_ONLY) {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::NVLINK_ONLY>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
+    // EPI20: PreferEqual — midpoint between PreferL1 (EPI14 +45%) and carveout=100 (EPI17 flat).
+    CHECK_CUDA(cudaFuncSetCacheConfig(kernel, cudaFuncCachePreferEqual));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
   else {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::MIXED>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
+    CHECK_CUDA(cudaFuncSetCacheConfig(kernel, cudaFuncCachePreferEqual));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
 
@@ -794,8 +797,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI19: ARCH6 tip + NCU9 L2 prefetch next-K in GEMM mainloop (tile.cuh).
-  // Reverts EPI18 pS0=3 (NO_KEEP +23%). Bar: ARCH6.
+  // EPI20: ARCH6 tip + cudaFuncCachePreferEqual (host). Reverts EPI19 L2 next-K.
+  // Not PreferL1 / carveout / pS0=3 / I<=4096. Bar: ARCH6.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
