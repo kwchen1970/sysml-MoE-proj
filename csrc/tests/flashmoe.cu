@@ -801,8 +801,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI8: fold NCU12 — shared-A GEMM0+GEMM1 pS=2; two-pass stays pS=1.
-  // Keep EPI epilogue (two-pass reg-gate, cosize, slack=0). Bar: beat NCU10.
+  // EPI9: EPI7 base + shape-aware GEMM1 pS1=2 for E<=64 only (NCU11).
+  // E=128 keeps pS1=1 (EPI8 thrash). Two-pass pS=1/1. Bar: beat NCU10.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -873,8 +873,12 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // NCU12: deepen GEMM0+GEMM1 on shared-A
-    launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<2>{});
+    // EPI9/NCU11: pS0=2 always; pS1=2 only when E<=64
+    if (E <= 64) {
+      launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<2>{});
+    } else {
+      launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
+    }
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
   }
