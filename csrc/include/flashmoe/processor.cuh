@@ -317,61 +317,76 @@ namespace flashmoe::processor
         // shared -> registers
         switch (const auto task = currentTask; task.getTaskType()) {
         case TaskType::GEMM0: {
-          // ARCH3 weight-stationary: task.tileIdx = N0 column; task.syncIdx = row base;
-          // task.flags = flags+row0. Stream all M-rows so expert B stays hot in L2/L1.
-          constexpr int bM0 = cute::get<0>(typename TileGEMM0::TileShape{});
-          const uint n0 = task.tileIdx;
-          const uint nRows = task.M() / static_cast<uint>(bM0);
-          if (nRows == 0) {
-            break;
-          }
           const auto* aP = reinterpret_cast<const Element*>(task.aData);
           const auto* bP = expertUpWeights + expertWeightSize * task.localExpertIdx();
           auto* __restrict__ cP = reinterpret_cast<Element*>(task.cData[0]);
           const auto* __restrict__ biasP = biasUp + static_cast<size_t>(I) * task.localExpertIdx();
-          for (uint row = 0; row < nRows; ++row) {
-            const auto tileIdx = row * tilesN0 + n0;
-            if constexpr (mt == MLPMatmulType::vanilla) {
-              fGET<TileGEMM0, Activation>(workspace, aP, bP, cP, biasP, task.M(), I, H, tileIdx);
+          if constexpr (mt == MLPMatmulType::vanilla) {
+            fGET<TileGEMM0, Activation>(workspace, aP, bP, cP, biasP, task.M(), I, H, task.tileIdx);
+          }
+          else {
+            const auto* bPv = expertUpVWeights + expertWeightSize * task.localExpertIdx();
+            const auto* __restrict__ biasPv = biasUpV + static_cast<size_t>(I) * task.localExpertIdx();
+            fGET_gated<TileGEMM0, Activation>(workspace, aP, bP, bPv, cP, biasP, biasPv,
+              swishAlpha, swishBeta, task.M(), I, H, task.tileIdx);
+          }
+          __syncthreads();
+          if (!threadIdx.x) {
+            cuda::atomic_ref<uint, cuda::thread_scope_device> tileSync{*(pA.tQS + task.syncIdx)};
+            const auto isLast = tileSync.fetch_add(1, cuda::memory_order_acq_rel) + 1 == tilesN0;
+            enqueue = isLast;
+            if (isLast && (topo == Topology::NVLINK_ONLY || !task.isPeerRemote())) {
+              // clear the counter as it would no longer be used in this epoch
+              tileSync.store(0, cuda::memory_order_relaxed);
+            }
+          }
+          __syncthreads();
+          if (enqueue) {
+            const auto offset = tilesN1 * (task.tileIdx / tilesN0);
+            auto* __restrict__ tQ = pA.ptQ + (task.syncIdx * tilesN1);
+            if (topo == Topology::MIXED && task.isPeerRemote()) {
+              notifyNext<PeerConnectivity::remote, threads>(workspace, task, tQ, tilesN1, flagColStride,
+                offset, pA.tQH);
+            }
+            else if constexpr (topo == Topology::NVLINK_ONLY) {
+              // ARCH4: inline GEMM1 tile 0 on this CTA while GEMM0 staging A is hot.
+              // Keep tilesN1-1 GEMM1 tasks scheduler-parallel (avoid ARCH1 full serialize).
+              const auto* aP1 = reinterpret_cast<const Element*>(task.cData[0]);
+              const auto* bP1 = expertDownWeights + expertWeightSize * task.localExpertIdx();
+              auto* __restrict__ cP1 = reinterpret_cast<Element*>(task.cData[1]);
+              const auto* __restrict__ biasP1 = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
+              fGET<TileGEMM1, cublasdx::identity>(workspace, aP1, bP1, cP1, biasP1,
+                task.M(), H, I, static_cast<int>(offset));
+              __syncthreads();
+              if (!threadIdx.x) {
+                const auto mCoord = offset / tilesN1;
+                const auto nCoord = 0u;
+                const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
+                const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
+                const auto flagSignal = SignalPayload<PacketStage::last>{
+                  static_cast<uint>(mCoord),
+                  task.tileSize(),
+                  producerBit,
+                  stateNumber,
+                };
+                producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
+                cuda::atomic_ref<uint64_t, cuda::thread_scope_system> remoteFlags{*task.flags};
+                remoteFlags.store(cuda::std::bit_cast<uint64_t>(flagSignal), cuda::memory_order_release);
+              }
+              __syncthreads();
+              if (tilesN1 > 1) {
+                Task rest = task;
+                rest.flags = task.flags + flagColStride; // nCoord starts at 1
+                notifyNext<PeerConnectivity::p2p, threads>(workspace, rest, tQ, tilesN1 - 1,
+                  flagColStride, offset + 1, pA.tQH);
+              }
             }
             else {
-              const auto* bPv = expertUpVWeights + expertWeightSize * task.localExpertIdx();
-              const auto* __restrict__ biasPv = biasUpV + static_cast<size_t>(I) * task.localExpertIdx();
-              fGET_gated<TileGEMM0, Activation>(workspace, aP, bP, bPv, cP, biasP, biasPv,
-                swishAlpha, swishBeta, task.M(), I, H, tileIdx);
+              notifyNext<PeerConnectivity::p2p, threads>(workspace, task, tQ, tilesN1, flagColStride,
+                offset, pA.tQH);
             }
-            __syncthreads();
-            if (!threadIdx.x) {
-              cuda::atomic_ref<uint, cuda::thread_scope_device> tileSync{*(pA.tQS + task.syncIdx + row)};
-              const auto isLast = tileSync.fetch_add(1, cuda::memory_order_acq_rel) + 1 == tilesN0;
-              enqueue = isLast;
-              if (isLast && (topo == Topology::NVLINK_ONLY || !task.isPeerRemote())) {
-                tileSync.store(0, cuda::memory_order_relaxed);
-              }
-            }
-            __syncthreads();
-            if (enqueue) {
-              // Build a per-row view for notifyNext (flags/syncIdx/tileIdx for this row).
-              Task rowTask = task;
-              rowTask.syncIdx = task.syncIdx + row;
-              rowTask.tileIdx = tileIdx;
-              rowTask.flags = task.flags + row;
-              rowTask.ingredients.tileSize = (row + 1 == nRows)
-                ? task.tileSize()
-                : static_cast<uint16_t>(bM0);
-              const auto offset = tilesN1 * row;
-              auto* __restrict__ tQ = pA.ptQ + (rowTask.syncIdx * tilesN1);
-              if (topo == Topology::MIXED && task.isPeerRemote()) {
-                notifyNext<PeerConnectivity::remote, threads>(workspace, rowTask, tQ, tilesN1,
-                  flagColStride, offset, pA.tQH);
-              }
-              else {
-                notifyNext<PeerConnectivity::p2p, threads>(workspace, rowTask, tQ, tilesN1,
-                  flagColStride, offset, pA.tQH);
-              }
-            }
-            __syncthreads();
           }
+          __syncthreads();
         }
         break;
         case TaskType::GEMM1: {

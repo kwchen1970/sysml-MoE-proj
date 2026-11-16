@@ -149,9 +149,16 @@ namespace flashmoe::os
     auto* __restrict__ eCs = reinterpret_cast<int*>(scratch);
     if (!threadIdx.x) {
       // Expert computation expectant tasks
-      // ARCH3: GEMM0 is weight-stationary — tilesN0 column tasks per local expert
-      // (not per M-row). GEMM1 still per M-row. Self-correct via sTB at runtime.
-      *taskBound = ctx.nLx * ctx.world * tilesN0 + ctx.nLx * ctx.world * ecTilesM * tilesN1;
+      // actual amount unknown a priori, so we use upper bound and self-correct at runtime.
+      // ARCH4 (NVLINK_ONLY): one GEMM1 tile per M-row runs inline on the completing
+      // GEMM0 CTA, so scheduler-visible GEMM1 count is tilesN1-1 (0 if tilesN1==1).
+      if constexpr (topo == Topology::NVLINK_ONLY) {
+        const auto gemm1Sched = tilesN1 > 0 ? tilesN1 - 1 : 0;
+        *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + gemm1Sched);
+      }
+      else {
+        *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + tilesN1);
+      }
     }
     for (uint i = threadIdx.x; i < E; i += threads) {
       eCs[i] = expertCounts[i];

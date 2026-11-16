@@ -131,29 +131,38 @@ namespace flashmoe::subscriber
       auto* rcData = sHeap + heap.advanceOffset<1, 1>(args.epRank, ingredients.localExpertIdx);
       auto* intraStaging = sHeap + heap.advanceOffset<1, 0>(peer, ingredients.localExpertIdx);
       taskResults[1] = p == PeerConnectivity::remote ? intraStaging : rcData;
-      // ARCH3 weight-stationary: one GEMM0 task per N0 column covers all M-rows.
-      // CTA streams rows while expert weights (B) stay hot — not ARCH1 (no GEMM1
-      // serialize) and not ARCH2 (no 2-wide tile fusion). Empty packets still emit
-      // tilesN0 no-op tasks so taskBound/sTB stay exact.
-      const auto residue = routedTokens - fTilesM * bM;
-      const auto lastTileSize = static_cast<uint16_t>(residue ? residue : bM);
-      const auto nTasks = args.tilesN0;
-      const auto fS = nTasks / WARP_SIZE + (laneId < nTasks % WARP_SIZE);
-      for (uint i = 0; i < fS; ++i) {
-        const auto n0 = laneId + i * WARP_SIZE;
-        if (n0 >= nTasks) {
-          break;
-        }
-        // tileIdx = N0 column; syncIdx = expert/peer row-base; flags = row0 base.
-        ingredients.tileSize = lastTileSize;
+      const auto wT = fTilesM * args.tilesN0;
+      const auto fS = wT / WARP_SIZE + (laneId < wT % WARP_SIZE);
+      const auto rT = args.tilesN0 % WARP_SIZE;
+      const auto lS = args.tilesN0 / WARP_SIZE + (rT > 0 ? laneId < rT : 0);
+      const auto tSlice = fS + (routedTokens % bM == 0 ? 0 : lS);
+
+      for (int i = 0; i < fS; ++i) {
+        const auto tileIdx = laneId + i * WARP_SIZE;
+        const auto rowIdx = tileIdx / args.tilesN0;
+        const auto syncIdx = sO + rowIdx;
+        ingredients.tileSize = bM;
         args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, i)] = Task{
-          ingredients, packet, taskResults, rcData, flags, sO, n0
+          ingredients, packet, taskResults, rcData, flags + rowIdx, syncIdx, tileIdx
         };
       }
-      if (fS) {
-        lTQHead += fS;
+
+      // residue tile
+      if (const auto residue = routedTokens - fTilesM * bM; residue) {
+        for (uint j = 0; j < lS; j++) {
+          const auto tileIdx = fTilesM * args.tilesN0 + laneId + j * WARP_SIZE;
+          const auto syncIdx = sO + fTilesM;
+          ingredients.tileSize = static_cast<uint16_t>(residue);
+          args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, fS + j)] = Task{
+            ingredients, packet, taskResults, rcData, flags + fTilesM, syncIdx, tileIdx
+          };
+        }
+      }
+
+      if (tSlice) {
+        lTQHead += tSlice;
         cuda::atomic_ref<unsigned int, cuda::thread_scope_block> tqh{*args.tQHead};
-        cuda::std::ignore = tqh.fetch_add(fS, cuda::memory_order_release);
+        cuda::std::ignore = tqh.fetch_add(tSlice, cuda::memory_order_release);
       }
     }
   };
@@ -198,15 +207,14 @@ namespace flashmoe::subscriber
   };
 
   // Self-correct Termination Bound
-  // ARCH3: GEMM0 is tilesN0 per expert (always emitted); GEMM1 still per M-row.
+  // ARCH4 NVLINK: scheduler GEMM1 per row is tilesN1-1 (one tile inlined on GEMM0 CTA).
+  template <Topology topo>
   __device__ __forceinline__
   void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0) {
     if (!atomicTAS<cuda::thread_scope_block>(args.status + peer)) {
-      // peerTaskTiles==0 → whole peer unused (ahead/noop): drop GEMM0+GEMM1.
-      // else only unused GEMM1 rows (GEMM0 always emitted for every local expert).
-      const auto superfluous = (peerTaskTiles == 0)
-        ? (args.nLx * args.tilesN0 + args.nLx * args.ecTilesM * args.tilesN1)
-        : (args.tilesN1 * ((args.nLx * args.ecTilesM) - peerTaskTiles));
+      const auto gemm1Sched = (topo == Topology::NVLINK_ONLY && args.tilesN1 > 0)
+        ? args.tilesN1 - 1u : args.tilesN1;
+      const auto superfluous = (args.tilesN0 + gemm1Sched) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
       atomicSub_block(args.taskCount, superfluous);
     }
   }
@@ -254,7 +262,7 @@ namespace flashmoe::subscriber
               if (sigPayload.stateNumber == currentStateNumber) {
                 // set visited bit
                 // self-correct the termination bound
-                sTB(args, peerIdx, sigPayload.totalTilesM);
+                sTB<topo>(args, peerIdx, sigPayload.totalTilesM);
                 visitedSet.set(vIdx);
 
                 // enforce memory consistency of expected packet
@@ -285,7 +293,7 @@ namespace flashmoe::subscriber
                 Thus, as we catch up to them, we self-correct
                 our termination bound to avoid a deadlock.
                 */
-                sTB(args, peerIdx);
+                sTB<topo>(args, peerIdx);
                 // set visited bit
                 visitedSet.set(vIdx);
               }
@@ -296,11 +304,11 @@ namespace flashmoe::subscriber
               signal = f.load(cuda::memory_order::acquire);
               const auto sigPayload = cuda::std::bit_cast<SignalPayload<PacketStage::initial>>(signal);
               if (sigPayload.stateNumber == currentStateNumber) {
-                sTB(args, peerIdx, sigPayload.totalTilesM);
+                sTB<topo>(args, peerIdx, sigPayload.totalTilesM);
                 visitedSet.set(vIdx);
               }
               else if (sbs::ahead(sigPayload.stateNumber, currentStateNumber)) {
-                sTB(args, peerIdx);
+                sTB<topo>(args, peerIdx);
                 // set visited bit
                 visitedSet.set(vIdx);
               }
@@ -316,9 +324,7 @@ namespace flashmoe::subscriber
         const bool expected = sigPayload.stateNumber == currentStateNumber;
         const bool ahead = sbs::ahead(sigPayload.stateNumber, currentStateNumber);
         pending -= (expected || ahead)? 1 : 0;
-        // ARCH3: always emit weight-stationary GEMM0 column tasks on expected,
-        // including routedTokens==0 (no-op columns) for exact taskBound.
-        if (expected) {
+        if (expected && sigPayload.routedTokens > 0) {
           const auto myLocalExIdx = flagIdx % args.nLx;
           const auto lXI = args.lX[myLocalExIdx];
           const auto* packet = symHeap.advance<0, 1>(peerIdx, myLocalExIdx);
@@ -327,16 +333,21 @@ namespace flashmoe::subscriber
           ingredients.localExpertIdx = myLocalExIdx;
           ingredients.taskType = TaskType::GEMM0;
           ingredients.peerIdx = pLI.pe;
+          // pad here for compatibility
           ingredients.M = cute::ceil_div(sigPayload.routedTokens, bM) * bM;
           ingredients.stash = peerIdx;
           if (topo == Topology::MIXED && pLI.isRemote) {
+            // col-major indexing
             auto* nFlags = args.flags + args.gfSfC + lXI.expertIndex * args.ecTilesM;
+            // frd
             ingredients.isPeerRemote = 1;
             fRd(args, symHeap, symHeap.sHeap, ingredients, nFlags, packet,
                 sigPayload.routedTokens, peerIdx, laneId, ltQHead);
           }
           else {
+            // col-major indexing
             auto* nFlags = pLI.remoteSFlags + args.gfSfC + lXI.expertIndex * args.ecTilesM;
+            // fpd
             ingredients.isPeerRemote = 0;
             fPd(args, symHeap, pLI.remoteSHeap, ingredients, nFlags, packet,
                 sigPayload.routedTokens, peerIdx, laneId, ltQHead);
