@@ -189,12 +189,14 @@ namespace flashmoe::processor
 
   template <
     PeerConnectivity p,
-    int threads
+    int threads,
+    int tileStride = 1
   >
   __device__ __forceinline__
   void notifyNext(void* __restrict__ const& workspace, const Task& task, Task* __restrict__ const& tQ,
                   const uint& tasks, const uint& flagColStride,
                   const uint& offset, uint* __restrict__ const& tQH) {
+    static_assert(tileStride >= 1);
     auto ingredients = task.ingredients;
     ingredients.taskType = TaskType::GEMM1;
     // registers -> shared memory
@@ -203,11 +205,12 @@ namespace flashmoe::processor
     using TVT = cutlass::AlignedArray<uint4, sizeof(Task) / sizeof(uint4), alignof(Task)>;
     auto* __restrict__ sTQ = static_cast<TVT*>(workspace);
     for (int i = threadIdx.x; i < tasks; i += threads) {
+      const auto tileOff = static_cast<uint>(i) * static_cast<uint>(tileStride);
       const auto tvv = cuda::std::bit_cast<TVT>(
         Task{
           ingredients, task.cData[0], task.cData, task.rcData,
-          task.flags + (p == PeerConnectivity::remote ? 0 : i * flagColStride), // col-major indexing
-          task.syncIdx, offset + i
+          task.flags + (p == PeerConnectivity::remote ? 0 : tileOff * flagColStride), // col-major indexing
+          task.syncIdx, offset + tileOff
       });
       sTQ[i] = tvv;
     }
@@ -362,41 +365,10 @@ namespace flashmoe::processor
                 offset, pA.tQH);
             }
             else if constexpr (topo == Topology::NVLINK_ONLY) {
-              // ARCH12: inline fused GEMM1 tile 0 on this CTA while GEMM0 staging A is hot.
-              // Keep tilesN1-1 scheduler-parallel (not ARCH1 full serialize, not steal).
-              constexpr int bM1 = cute::get<0>(typename TileGEMM1::TileShape{});
-              constexpr int bN1 = cute::get<1>(typename TileGEMM1::TileShape{});
-              constexpr int Arch1 = TileGEMM1::TileArch::value;
-              const auto mCoord0 = offset / tilesN1;
-              const auto* aP1 = reinterpret_cast<const Element*>(task.cData[0]);
-              const auto* bP1 = expertDownWeights + expertWeightSize * task.localExpertIdx();
-              auto* __restrict__ cP1 = reinterpret_cast<Element*>(task.cData[1]);
-              const auto* __restrict__ biasP1 = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
-              fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
-                workspace, aP1, bP1, cP1, biasP1, task.M(), H, I, static_cast<int>(offset));
-              const auto tokenBatchStart0 = static_cast<uint>(mCoord0) * static_cast<uint>(bM1);
-              const auto* __restrict__ tokenIds0 = tokenIndices
-                + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart0);
-              const auto tileCoord0 = cute::make_coord(cute::_0{}, 0);
-              combine<bM1, bN1, Arch1, threads, combineMode, true>(S, H, workspace, tokenIds0, moeOutput,
-                static_cast<const Element*>(nullptr), task.tileSize(), tileCoord0);
-              if (!threadIdx.x) {
-                const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord0, 0);
-                const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
-                producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord0, 0) = producerBit;
-                constexpr uint subCount = threads - WARP_SIZE;
-                const auto flagIdx = 0u * flagColStride
-                  + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord0);
-                const auto slotIdx = flagIdx / subCount;
-                const auto sBIdx = (flagIdx % subCount) + (slotIdx / 32u) * subCount;
-                const auto bIdx = slotIdx % 32u;
-                cuda::atomic_ref<uint, cuda::thread_scope_device> senseWord{consumerCombineBitMap[sBIdx].storage};
-                senseWord.fetch_xor(1u << bIdx, cuda::memory_order_relaxed);
-              }
-              if (tilesN1 > 1) {
-                notifyNext<PeerConnectivity::p2p, threads>(workspace, task, tQ, tilesN1 - 1, flagColStride,
-                  offset + 1, pA.tQH);
-              }
+              // ARCH13: 2-wide GEMM1 publish — ceil(tilesN1/2) doorbell tasks, stride-2 tileIdx.
+              const auto gemm1Sched = (tilesN1 + 1u) / 2u;
+              notifyNext<PeerConnectivity::p2p, threads, 2>(workspace, task, tQ, gemm1Sched, flagColStride,
+                offset, pA.tQH);
             }
             else {
               notifyNext<PeerConnectivity::p2p, threads>(workspace, task, tQ, tilesN1, flagColStride,
@@ -415,34 +387,41 @@ namespace flashmoe::processor
           constexpr int bN = cute::get<1>(typename TileGEMM1::TileShape{});
           constexpr int Arch = TileGEMM1::TileArch::value;
           const auto mCoord = task.tileIdx / tilesN1;
-          const auto nCoord = task.tileIdx % tilesN1;
+          const auto nCoord0 = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
-            // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
-            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
-              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
+            // ARCH13: 2-wide fused GEMM1→combine on ARCH6 smem-resident path.
+            // One doorbell drains up to two consecutive N-tiles so down-proj B stays hot;
+            // pairs stay scheduler-parallel (not ARCH1 full serialize / not steal).
+            const int span = (nCoord0 + 1u < tilesN1) ? 2 : 1;
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
-            const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
-              static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
-            if (!threadIdx.x) {
-              const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
-              const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
-              producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
-              // No flag store — subscriber pre-visits combine flags; sense flipped in-place.
-              constexpr uint subCount = threads - WARP_SIZE;
-              const auto flagIdx = static_cast<uint>(nCoord) * flagColStride
-                + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord);
-              const auto slotIdx = flagIdx / subCount;
-              const auto sBIdx = (flagIdx % subCount) + (slotIdx / 32u) * subCount;
-              const auto bIdx = slotIdx % 32u;
-              cuda::atomic_ref<uint, cuda::thread_scope_device> senseWord{consumerCombineBitMap[sBIdx].storage};
-              senseWord.fetch_xor(1u << bIdx, cuda::memory_order_relaxed);
+            for (int s = 0; s < span; ++s) {
+              const auto nCoord = nCoord0 + static_cast<uint>(s);
+              const auto tIdx = static_cast<int>(task.tileIdx + static_cast<uint>(s));
+              fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
+                workspace, aP, bP, cP, biasP, task.M(), H, I, tIdx);
+              const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
+              combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
+                static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
+              if (!threadIdx.x) {
+                const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
+                const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
+                producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
+                constexpr uint subCount = threads - WARP_SIZE;
+                const auto flagIdx = static_cast<uint>(nCoord) * flagColStride
+                  + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord);
+                const auto slotIdx = flagIdx / subCount;
+                const auto sBIdx = (flagIdx % subCount) + (slotIdx / 32u) * subCount;
+                const auto bIdx = slotIdx % 32u;
+                cuda::atomic_ref<uint, cuda::thread_scope_device> senseWord{consumerCombineBitMap[sBIdx].storage};
+                senseWord.fetch_xor(1u << bIdx, cuda::memory_order_relaxed);
+              }
+              __syncthreads();
             }
           }
           else {
+            const auto nCoord = nCoord0;
             fGET<TileGEMM1, cublasdx::identity>(workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
             __syncthreads();
             if (!threadIdx.x) {

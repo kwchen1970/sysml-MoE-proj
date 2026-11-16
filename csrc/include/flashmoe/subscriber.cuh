@@ -207,13 +207,13 @@ namespace flashmoe::subscriber
   };
 
   // Self-correct Termination Bound
-  // ARCH12 NVLINK: scheduler GEMM1 per row is tilesN1-1 (tile 0 inlined on GEMM0 CTA).
+  // ARCH13 NVLINK: scheduler GEMM1 per row is ceil(tilesN1/2) (2-wide fused drain).
   template <Topology topo>
   __device__ __forceinline__
   void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0) {
     if (!atomicTAS<cuda::thread_scope_block>(args.status + peer)) {
-      const auto gemm1Sched = (topo == Topology::NVLINK_ONLY && args.tilesN1 > 0)
-        ? args.tilesN1 - 1u : args.tilesN1;
+      const auto gemm1Sched = (topo == Topology::NVLINK_ONLY)
+        ? (args.tilesN1 + 1u) / 2u : args.tilesN1;
       const auto superfluous = (args.tilesN0 + gemm1Sched) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
       atomicSub_block(args.taskCount, superfluous);
     }

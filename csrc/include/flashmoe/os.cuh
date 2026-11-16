@@ -150,10 +150,9 @@ namespace flashmoe::os
     if (!threadIdx.x) {
       // Expert computation expectant tasks
       // actual amount unknown a priori, so we use upper bound and self-correct at runtime.
-      // ARCH12 (NVLINK): GEMM1 tile 0 runs inline on the completing GEMM0 CTA
-      // (smem-resident fuse), so scheduler-visible GEMM1 count is tilesN1-1.
+      // ARCH13 (NVLINK): GEMM1 published 2-wide → ceil(tilesN1/2) scheduler tasks per M-row.
       if constexpr (topo == Topology::NVLINK_ONLY) {
-        const auto gemm1Sched = tilesN1 > 0 ? tilesN1 - 1 : 0;
+        const auto gemm1Sched = (tilesN1 + 1u) / 2u;
         *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + gemm1Sched);
       }
       else {
