@@ -192,44 +192,123 @@ namespace flashmoe::processor
     int threads
   >
   __device__ __forceinline__
-  void notifyNext(void* __restrict__ const& workspace, const Task& task, Task* __restrict__ const& tQ,
-                  const uint& tasks, const uint& flagColStride,
-                  const uint& offset, uint* __restrict__ const& tQH) {
+  void writeGemm1Tasks(void* __restrict__ const& workspace, const Task& task, Task* __restrict__ const& tQ,
+                       const uint& tasks, const uint& flagColStride, const uint& offset) {
     auto ingredients = task.ingredients;
     ingredients.taskType = TaskType::GEMM1;
-    // registers -> shared memory
     static_assert(sizeof(Task) % sizeof(uint4) == 0 && alignof(Task) % sizeof(uint4) == 0);
     static_assert(cuda::std::is_trivially_copyable_v<Task>);
     using TVT = cutlass::AlignedArray<uint4, sizeof(Task) / sizeof(uint4), alignof(Task)>;
     auto* __restrict__ sTQ = static_cast<TVT*>(workspace);
-    for (int i = threadIdx.x; i < tasks; i += threads) {
+    for (int i = threadIdx.x; i < static_cast<int>(tasks); i += threads) {
       const auto tvv = cuda::std::bit_cast<TVT>(
         Task{
           ingredients, task.cData[0], task.cData, task.rcData,
-          task.flags + (p == PeerConnectivity::remote ? 0 : i * flagColStride), // col-major indexing
+          task.flags + (p == PeerConnectivity::remote ? 0 : i * flagColStride),
           task.syncIdx, offset + i
       });
       sTQ[i] = tvv;
     }
     __syncthreads();
-    // shared memory to global memory
     constexpr int nRows = sizeof(Task) / sizeof(uint4);
-    const uint numElems = tasks * nRows; // TODO <- store this in constant memory
-    // project TaskQ as a [tasks, nRows] matrix of 128B elements
+    const uint numElems = tasks * nRows;
     auto gT = cute::make_tensor(cute::make_gmem_ptr(reinterpret_cast<uint4*>(tQ)),
                                 cute::make_layout(cute::make_shape(tasks, nRows), cute::LayoutRight{}));
     auto sT = cute::make_tensor(cute::make_smem_ptr(static_cast<uint4*>(workspace)),
                                 cute::make_layout(cute::make_shape(tasks, nRows), cute::LayoutRight{}));
-    for (int i = threadIdx.x; i < numElems; i += threads) {
+    for (int i = threadIdx.x; i < static_cast<int>(numElems); i += threads) {
       const auto rowIdx = i / nRows;
       const auto colIdx = i % nRows;
       gT(rowIdx, colIdx) = sT(rowIdx, colIdx);
     }
     __syncthreads();
+  }
+
+  template <
+    PeerConnectivity p,
+    int threads
+  >
+  __device__ __forceinline__
+  void notifyNext(void* __restrict__ const& workspace, const Task& task, Task* __restrict__ const& tQ,
+                  const uint& tasks, const uint& flagColStride,
+                  const uint& offset, uint* __restrict__ const& tQH) {
+    writeGemm1Tasks<p, threads>(workspace, task, tQ, tasks, flagColStride, offset);
     if (!threadIdx.x) {
       cuda::atomic_ref<uint, cuda::thread_scope_device> tqh{*(tQH + task.syncIdx)};
-      // notify scheduler
       cuda::std::ignore = tqh.fetch_add(tasks, cuda::memory_order_release);
+    }
+  }
+
+  // ARCH7: publish GEMM1 tiles for device-wide steal (no scheduler doorbell).
+  // tileSync was cleared to 0 by the GEMM0 closer; stealers claim via fetch_add.
+  // gTqHeads[syncIdx] = tilesN1 is the ready flag (scheduler sees gtQCL=0 on NVLINK_ONLY).
+  template <
+    PeerConnectivity p,
+    int threads
+  >
+  __device__ __forceinline__
+  void publishGemm1Steal(void* __restrict__ const& workspace, const Task& task, Task* __restrict__ const& tQ,
+                         const uint& tasks, const uint& flagColStride, const uint& offset,
+                         uint* __restrict__ const& gTqHeads) {
+    writeGemm1Tasks<p, threads>(workspace, task, tQ, tasks, flagColStride, offset);
+    __threadfence();
+    if (!threadIdx.x) {
+      cuda::atomic_ref<uint, cuda::thread_scope_device> ready{*(gTqHeads + task.syncIdx)};
+      ready.store(tasks, cuda::memory_order_release);
+    }
+    __syncthreads();
+  }
+
+  // ARCH6+7: smem-resident GEMM1 → combine (no staging RT) + sense flip.
+  template <
+    int threads,
+    CombineMode combineMode,
+    typename TileGEMM1,
+    typename Element,
+    typename PBM
+  >
+  __device__ __forceinline__
+  void fusedGemm1Combine(cuda::std::byte* __restrict__ const& workspace,
+                         const Task& task,
+                         const int& S, const int& H, const int& I,
+                         const uint& roundEC, const uint& flagColStride,
+                         const uint& tilesN1, const uint& ecTilesM,
+                         const Element* __restrict__ const& expertDownWeights,
+                         const Element* __restrict__ const& biasDown,
+                         const TPS* __restrict__ const& tokenIndices,
+                         Element* __restrict__ const& moeOutput,
+                         const PBM& producerBitMap,
+                         BitSet* __restrict__ const& consumerCombineBitMap,
+                         const size_t& expertWeightSize) {
+    const auto* aP = reinterpret_cast<const Element*>(task.aData);
+    const auto* bP = expertDownWeights + expertWeightSize * task.localExpertIdx();
+    auto* __restrict__ cP = reinterpret_cast<Element*>(task.cData[1]);
+    const auto* __restrict__ biasP = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
+    constexpr int bM = cute::get<0>(typename TileGEMM1::TileShape{});
+    constexpr int bN = cute::get<1>(typename TileGEMM1::TileShape{});
+    constexpr int Arch = TileGEMM1::TileArch::value;
+    const auto mCoord = task.tileIdx / tilesN1;
+    const auto nCoord = task.tileIdx % tilesN1;
+    fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
+      workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
+    const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
+    const auto* __restrict__ tokenIds = tokenIndices
+      + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
+    const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
+    combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
+      static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
+    if (!threadIdx.x) {
+      const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
+      const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
+      producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
+      constexpr uint subCount = threads - WARP_SIZE;
+      const auto flagIdx = static_cast<uint>(nCoord) * flagColStride
+        + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord);
+      const auto slotIdx = flagIdx / subCount;
+      const auto sBIdx = (flagIdx % subCount) + (slotIdx / 32u) * subCount;
+      const auto bIdx = slotIdx % 32u;
+      cuda::atomic_ref<uint, cuda::thread_scope_device> senseWord{consumerCombineBitMap[sBIdx].storage};
+      senseWord.fetch_xor(1u << bIdx, cuda::memory_order_relaxed);
     }
   }
 
@@ -274,6 +353,7 @@ namespace flashmoe::processor
     __shared__ Task currentTask;
     __shared__ uint globalInterrupt;
     __shared__ uint enqueue;
+    __shared__ uint stealHit;
     TQSignal tqs{0U, 0U};
     static_assert(sizeof(TQSignal) == sizeof(uint64_t) && alignof(TQSignal) == alignof(uint64_t));
     static_assert(sizeof(SignalPayload<PacketStage::last>) == sizeof(uint64_t) &&
@@ -281,48 +361,146 @@ namespace flashmoe::processor
     if (!threadIdx.x) {
       globalInterrupt = 0U;
       enqueue = 0U;
+      stealHit = 0U;
     }
     __syncthreads();
     using SQT = cuda::std::underlying_type_t<flashmoe::ReadySignal>;
     constexpr auto taskWidth = sizeof(Task) / sizeof(uint4);
     const size_t expertWeightSize = static_cast<size_t>(I) * H;
+    // flagColStride == world*nLx*ecTilesM == steal slot count on single-node.
+    const uint stealSlots = flagColStride;
     static_assert(taskWidth > 0 && taskWidth < WARP_SIZE);
     while (!tqs.interrupt) {
       FLASHMOE_TRACE_STATE(flashmoe::project_trace::wait);
+      // ARCH7: before doorbell wait, try to steal a published GEMM1 tile.
+      // Many CTAs drain in parallel — learns from ARCH1's single-CTA serialization.
+      // Solo-gates the never-measured ARCH2 steal idea on the ARCH6 fuse tip.
+      if constexpr (topo == Topology::NVLINK_ONLY) {
+        if (!threadIdx.x) {
+          stealHit = 0U;
+          const uint start = blockIdx.x % stealSlots;
+          for (uint k = 0; k < stealSlots; ++k) {
+            const uint syncIdx = (start + k) % stealSlots;
+            cuda::atomic_ref<uint, cuda::thread_scope_device> ready{*(pA.tQH + syncIdx)};
+            if (ready.load(cuda::memory_order_acquire) != tilesN1) {
+              continue;
+            }
+            cuda::atomic_ref<uint, cuda::thread_scope_device> claim{*(pA.tQS + syncIdx)};
+            const uint my = claim.fetch_add(1, cuda::memory_order_acq_rel);
+            if (my < tilesN1) {
+              const auto* __restrict__ src = reinterpret_cast<const uint4*>(pA.ptQ + syncIdx * tilesN1 + my);
+              auto* __restrict__ dst = reinterpret_cast<uint4*>(&currentTask);
+              #pragma unroll
+              for (int w = 0; w < taskWidth; ++w) {
+                dst[w] = src[w];
+              }
+              stealHit = 1U;
+              if (my + 1 == tilesN1) {
+                ready.store(0U, cuda::memory_order_release);
+                claim.store(0U, cuda::memory_order_relaxed);
+              }
+              break;
+            }
+          }
+        }
+        __syncthreads();
+        if (stealHit) {
+          FLASHMOE_TRACE_STATE(flashmoe::project_trace::task,
+            static_cast<unsigned>(TaskType::GEMM1), currentTask.tileIdx);
+          fusedGemm1Combine<threads, combineMode, TileGEMM1, Element>(
+            workspace, currentTask, S, H, I, roundEC, flagColStride, tilesN1, ecTilesM,
+            expertDownWeights, biasDown, tokenIndices, moeOutput, producerBitMap,
+            consumerCombineBitMap, expertWeightSize);
+          __syncthreads();
+          if (!threadIdx.x) {
+            stealHit = 0U;
+          }
+          __syncthreads();
+          continue;
+        }
+      }
       if (threadIdx.x / WARP_SIZE == 0) {
         if (threadIdx.x == 0) {
           cuda::atomic_ref<uint64_t, cuda::thread_scope_device> doorbell{*pA.pDB};
           // await new task from scheduler
           auto payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
           while (payload.signal == tqs.signal && payload.interrupt == 0) {
+            // ARCH7: while spinning, peek steal queue (thread0 only flags; CTA joins after)
+            if constexpr (topo == Topology::NVLINK_ONLY) {
+              const uint start = blockIdx.x % stealSlots;
+              for (uint k = 0; k < stealSlots; ++k) {
+                const uint syncIdx = (start + k) % stealSlots;
+                cuda::atomic_ref<uint, cuda::thread_scope_device> ready{*(pA.tQH + syncIdx)};
+                if (ready.load(cuda::memory_order_acquire) != tilesN1) {
+                  continue;
+                }
+                cuda::atomic_ref<uint, cuda::thread_scope_device> claim{*(pA.tQS + syncIdx)};
+                const uint my = claim.fetch_add(1, cuda::memory_order_acq_rel);
+                if (my < tilesN1) {
+                  const auto* __restrict__ src = reinterpret_cast<const uint4*>(pA.ptQ + syncIdx * tilesN1 + my);
+                  auto* __restrict__ dst = reinterpret_cast<uint4*>(&currentTask);
+                  #pragma unroll
+                  for (int w = 0; w < taskWidth; ++w) {
+                    dst[w] = src[w];
+                  }
+                  stealHit = 1U;
+                  if (my + 1 == tilesN1) {
+                    ready.store(0U, cuda::memory_order_release);
+                    claim.store(0U, cuda::memory_order_relaxed);
+                  }
+                  break;
+                }
+              }
+              if (stealHit) {
+                break;
+              }
+            }
             payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
           }
           FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
-          if (payload.interrupt) {
-            // we need to clear out our mailbox to ensure it's ready for a subsequent epoch
-            constexpr auto TQSZero = cuda::std::bit_cast<uint64_t>(TQSignal{0, 0});
-            doorbell.store(TQSZero, cuda::memory_order_relaxed);
+          if (!stealHit) {
+            if (payload.interrupt) {
+              // we need to clear out our mailbox to ensure it's ready for a subsequent epoch
+              constexpr auto TQSZero = cuda::std::bit_cast<uint64_t>(TQSignal{0, 0});
+              doorbell.store(TQSZero, cuda::memory_order_relaxed);
+            }
+            else {
+              cuda::atomic_ref<SQT, cuda::thread_scope_device> sqd{*pA.sQ};
+              // Eagerly indicate readiness for the next task
+              sqd.store(flashmoe::ready, cuda::memory_order_relaxed);
+            }
+            globalInterrupt = payload.interrupt;
+            // replace old payload with new one
+            tqs = payload;
           }
-          else {
-            cuda::atomic_ref<SQT, cuda::thread_scope_device> sqd{*pA.sQ};
-            // Eagerly indicate readiness for the next task
-            sqd.store(flashmoe::ready, cuda::memory_order_relaxed);
-          }
-          globalInterrupt = payload.interrupt;
-          // replace old payload with new one
-          tqs = payload;
         }
         __syncwarp();
-        auto payload = cuda::std::bit_cast<uint64_t>(tqs);
-        // broadcast new payload from thread 0 to other threads in the warp
-        payload = __shfl_sync(0xffffffff, payload, 0);
-        tqs = cuda::std::bit_cast<TQSignal>(payload);
-        const auto* __restrict__ gtQ = pA.tQ + tqs.decodeSig();
-        if (!tqs.interrupt && threadIdx.x < taskWidth) {
-          reinterpret_cast<uint4*>(&currentTask)[threadIdx.x] = reinterpret_cast<const uint4*>(gtQ)[threadIdx.x];
+        if (!stealHit) {
+          auto payload = cuda::std::bit_cast<uint64_t>(tqs);
+          // broadcast new payload from thread 0 to other threads in the warp
+          payload = __shfl_sync(0xffffffff, payload, 0);
+          tqs = cuda::std::bit_cast<TQSignal>(payload);
+          const auto* __restrict__ gtQ = pA.tQ + tqs.decodeSig();
+          if (!tqs.interrupt && threadIdx.x < taskWidth) {
+            reinterpret_cast<uint4*>(&currentTask)[threadIdx.x] = reinterpret_cast<const uint4*>(gtQ)[threadIdx.x];
+          }
         }
       }
       __syncthreads();
+      if (stealHit) {
+        FLASHMOE_TRACE_STATE(flashmoe::project_trace::task,
+          static_cast<unsigned>(TaskType::GEMM1), currentTask.tileIdx);
+        fusedGemm1Combine<threads, combineMode, TileGEMM1, Element>(
+          workspace, currentTask, S, H, I, roundEC, flagColStride, tilesN1, ecTilesM,
+          expertDownWeights, biasDown, tokenIndices, moeOutput, producerBitMap,
+          consumerCombineBitMap, expertWeightSize);
+        __syncthreads();
+        if (!threadIdx.x) {
+          stealHit = 0U;
+        }
+        __syncthreads();
+        continue;
+      }
       tqs.interrupt = globalInterrupt;
       if (!tqs.interrupt) {
         FLASHMOE_TRACE_STATE(flashmoe::project_trace::task,
@@ -349,7 +527,7 @@ namespace flashmoe::processor
             const auto isLast = tileSync.fetch_add(1, cuda::memory_order_acq_rel) + 1 == tilesN0;
             enqueue = isLast;
             if (isLast && (topo == Topology::NVLINK_ONLY || !task.isPeerRemote())) {
-              // clear the counter as it would no longer be used in this epoch
+              // ARCH7 reuses tileSync as the GEMM1 claim counter after publish.
               tileSync.store(0, cuda::memory_order_relaxed);
             }
           }
@@ -357,7 +535,12 @@ namespace flashmoe::processor
           if (enqueue) {
             const auto offset = tilesN1 * (task.tileIdx / tilesN0);
             auto* __restrict__ tQ = pA.ptQ + (task.syncIdx * tilesN1);
-            if (topo == Topology::MIXED && task.isPeerRemote()) {
+            if constexpr (topo == Topology::NVLINK_ONLY) {
+              // ARCH7: publish to steal queue (parallel drain), not scheduler.
+              publishGemm1Steal<PeerConnectivity::p2p, threads>(workspace, task, tQ, tilesN1,
+                flagColStride, offset, pA.tQH);
+            }
+            else if (task.isPeerRemote()) {
               notifyNext<PeerConnectivity::remote, threads>(workspace, task, tQ, tilesN1, flagColStride,
                 offset, pA.tQH);
             }
@@ -370,42 +553,21 @@ namespace flashmoe::processor
         }
         break;
         case TaskType::GEMM1: {
-          const auto* aP = reinterpret_cast<const Element*>(task.aData);
-          const auto* bP = expertDownWeights + expertWeightSize * task.localExpertIdx();
-          auto* __restrict__ cP = reinterpret_cast<Element*>(task.cData[1]);
-          const auto* __restrict__ biasP = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
-          constexpr int bM = cute::get<0>(typename TileGEMM1::TileShape{});
-          constexpr int bN = cute::get<1>(typename TileGEMM1::TileShape{});
-          constexpr int Arch = TileGEMM1::TileArch::value;
-          const auto mCoord = task.tileIdx / tilesN1;
-          const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
-            // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
-            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
-              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
-            const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
-            const auto* __restrict__ tokenIds = tokenIndices
-              + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
-            const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
-              static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
-            if (!threadIdx.x) {
-              const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
-              const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
-              producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
-              // No flag store — subscriber pre-visits combine flags; sense flipped in-place.
-              constexpr uint subCount = threads - WARP_SIZE;
-              const auto flagIdx = static_cast<uint>(nCoord) * flagColStride
-                + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord);
-              const auto slotIdx = flagIdx / subCount;
-              const auto sBIdx = (flagIdx % subCount) + (slotIdx / 32u) * subCount;
-              const auto bIdx = slotIdx % 32u;
-              cuda::atomic_ref<uint, cuda::thread_scope_device> senseWord{consumerCombineBitMap[sBIdx].storage};
-              senseWord.fetch_xor(1u << bIdx, cuda::memory_order_relaxed);
-            }
+            // Fallback (scheduler should not dispatch GEMM1 on NVLINK under ARCH7).
+            fusedGemm1Combine<threads, combineMode, TileGEMM1, Element>(
+              workspace, task, S, H, I, roundEC, flagColStride, tilesN1, ecTilesM,
+              expertDownWeights, biasDown, tokenIndices, moeOutput, producerBitMap,
+              consumerCombineBitMap, expertWeightSize);
           }
           else {
+            const auto* aP = reinterpret_cast<const Element*>(task.aData);
+            const auto* bP = expertDownWeights + expertWeightSize * task.localExpertIdx();
+            auto* __restrict__ cP = reinterpret_cast<Element*>(task.cData[1]);
+            const auto* __restrict__ biasP = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
+            constexpr int bM = cute::get<0>(typename TileGEMM1::TileShape{});
+            const auto mCoord = task.tileIdx / tilesN1;
+            const auto nCoord = task.tileIdx % tilesN1;
             fGET<TileGEMM1, cublasdx::identity>(workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
             __syncthreads();
             if (!threadIdx.x) {
