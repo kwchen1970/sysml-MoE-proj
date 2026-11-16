@@ -797,7 +797,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI0b: shared-A register-gate + two-pass gmem staging; keep C-slab smem slack.
+  // EPI1: HYB22 shared-A (reg-gate, no post-gated sync) + two-pass reg-gate (HYB20).
+  // Keep C-slab smem slack. Bar: beat HYB22.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
