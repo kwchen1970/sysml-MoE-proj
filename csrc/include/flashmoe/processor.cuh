@@ -388,11 +388,8 @@ namespace flashmoe::processor
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            // ARCH8: in-smem scale + scale-free RedAdd (see combine SkipGmemLoad path).
             combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
-            // ARCH8: wait for all atomics before sense flip (race-free publish to subscribers).
-            __syncthreads();
             if (!threadIdx.x) {
               const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
               const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
