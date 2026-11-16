@@ -126,6 +126,18 @@ static void testGlobalQueueIsWhole() {
   expect(take == 0, "a zero budget leaves the one-shot queue untouched");
 }
 
+static void testFinishFirstGemm1() {
+  // ARCH9: cold-expert GEMM1 drains before hot-expert GEMM0 when both are ready.
+  LocalQueue queues[2] = {
+    LocalQueue{0, 8, false}, // hot GEMM0
+    LocalQueue{3, 4, true},  // cold GEMM1
+  };
+  unsigned take[2] = {};
+  assignQueues(queues, 2, /*hot0=*/0, /*hot1=*/1, /*hotBudget=*/8, /*coldBudget=*/0, take);
+  expect(take[1] == 4, "cold GEMM1 is finish-critical and issues first");
+  expect(take[0] == 4, "remaining budget fills with hot GEMM0");
+}
+
 static void testNarrowToLongPole() {
   unsigned hist[4] = {40, 12, 3, 0};
   unsigned hot0 = 0;
@@ -143,6 +155,7 @@ int main() {
   testAdmitAndCap();
   testAdmitColdWhenShort();
   testGlobalQueueIsWhole();
+  testFinishFirstGemm1();
   testNarrowToLongPole();
   if (failures) {
     std::printf("%d failure(s)\n", failures);
