@@ -792,8 +792,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB17 + NCU1/NCU2: direct rmem->gmem C (incl. GEMM1 fGET);
-  // NCU2 keeps silu gate in registers (no gateCache smem) on shared-A and two-pass.
+  // Ampere gated HYB17 + NCU3: epoch-wake doorbell (non-owner warps do not
+  // park on syncthreads during wait). NCU1/NCU2 reverted (slower than HYB17).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
