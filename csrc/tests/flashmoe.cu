@@ -798,15 +798,14 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB22 keep + NCU4 epoch-wake: shared-A (bN0=64, I<4096 && k<=2) and two-pass
-  // both use direct rmem->gmem C store; shared-A keeps gateCache for silu.
+  // NCU5: HYB22 (shared-A reg-gate + drop post-gated sync) + Ampere gated pS=2.
+  // Hypothesis from NCU: L1TEX long_scoreboard ~44% / 87.9% no-eligible — gated pS=1
+  // leaves each K-step's copy exposed; pS=2 overlaps next load (smem still fits 2 blocks/SM).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
-  constexpr auto pS = arch >= 900 ? 3 : arch >= 800
-    ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
-    : 1;
+  constexpr auto pS = arch >= 900 ? 3 : arch >= 800 ? 2 : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
   static_assert(bM >= 1);
   if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
