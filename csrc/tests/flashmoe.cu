@@ -373,9 +373,14 @@ void kickstart(const Options& opts) {
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
-  // EPI0b: restore gated C-slab slack (EPI0 illegal-addressed without it).
+  // Tunable gated smem slack: -1 default = full SharedSizeC.
+#ifndef FLASHMOE_GATED_SMEM_SLACK
+#define FLASHMOE_GATED_SMEM_SLACK (-1)
+#endif
   constexpr auto gateSlack = (mt == flashmoe::MLPMatmulType::gated)
-    ? TileG0Host::SharedSizeC::value : 0;
+    ? (FLASHMOE_GATED_SMEM_SLACK < 0 ? static_cast<int>(TileG0Host::SharedSizeC::value)
+                                    : FLASHMOE_GATED_SMEM_SLACK)
+    : 0;
   constexpr auto GEMM0Sz = cutlass::round_up(
     cute::max(gemm0AB, TileG0Host::SharedSizeC::value) + gateSlack,
     flashmoe::MAX_ALIGNMENT);

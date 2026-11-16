@@ -79,13 +79,18 @@ namespace flashmoe::moe
     constexpr int bM = bM0;
     using TileG0 = tile::CollectiveMainloop<bM0, bN0, bK0, Config::Arch::value, Element,
       typename Config::AccumType, threads, pSK0>;
-    // EPI0b: keep a C-sized gated surcharge (EPI0 bare-cosize still illegal-addressed
-    // like HYB12). Epilogue itself no longer touches gateCache (reg-gate / gmem stage).
+    // Tunable gated smem slack: -1 (default) = full SharedSizeC (EPI0b-safe).
+    // EPI2 builds with -DFLASHMOE_GATED_SMEM_SLACK=2048 to free ~C for tiles.
+#ifndef FLASHMOE_GATED_SMEM_SLACK
+#define FLASHMOE_GATED_SMEM_SLACK (-1)
+#endif
     constexpr auto gemm0AB = (mt == MLPMatmulType::gated && bN0 <= 64)
       ? TileG0::SharedSizeABGated::value
       : TileG0::SharedSizeAB::value;
     constexpr auto gateSlack = (mt == MLPMatmulType::gated)
-      ? TileG0::SharedSizeC::value : 0;
+      ? (FLASHMOE_GATED_SMEM_SLACK < 0 ? TileG0::SharedSizeC::value
+                                      : FLASHMOE_GATED_SMEM_SLACK)
+      : 0;
     constexpr auto GEMM0Sz = cutlass::round_up(
       cute::max(gemm0AB, TileG0::SharedSizeC::value) + gateSlack, MAX_ALIGNMENT);
     using TileG1 = tile::CollectiveMainloop<bM1, bN1, bK1, Config::Arch::value, Element,
