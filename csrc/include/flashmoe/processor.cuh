@@ -436,7 +436,7 @@ namespace flashmoe::processor
               remoteFlags.store(sigPayload, cuda::memory_order_release);
               if constexpr (topo == Topology::NVLINK_ONLY) {
                 // ARCH5: flip consumer sense here (subscriber skips combine flags).
-                constexpr uint subCount = threads - SCHEDULER_COUNT;
+                constexpr uint subCount = threads - WARP_SIZE; // == OS subscriberCount
                 const auto flagIdx = static_cast<uint>(nCoord) * flagColStride
                   + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord);
                 const auto slotIdx = flagIdx / subCount;
