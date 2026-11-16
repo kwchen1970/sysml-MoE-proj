@@ -207,14 +207,10 @@ namespace flashmoe::subscriber
   };
 
   // Self-correct Termination Bound
-  // ARCH13 NVLINK: scheduler GEMM1 per row is ceil(tilesN1/2) (2-wide fused drain).
-  template <Topology topo>
   __device__ __forceinline__
   void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0) {
     if (!atomicTAS<cuda::thread_scope_block>(args.status + peer)) {
-      const auto gemm1Sched = (topo == Topology::NVLINK_ONLY)
-        ? (args.tilesN1 + 1u) / 2u : args.tilesN1;
-      const auto superfluous = (args.tilesN0 + gemm1Sched) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
+      const auto superfluous = (args.tilesN0 + args.tilesN1) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
       atomicSub_block(args.taskCount, superfluous);
     }
   }
@@ -262,7 +258,7 @@ namespace flashmoe::subscriber
               if (sigPayload.stateNumber == currentStateNumber) {
                 // set visited bit
                 // self-correct the termination bound
-                sTB<topo>(args, peerIdx, sigPayload.totalTilesM);
+                sTB(args, peerIdx, sigPayload.totalTilesM);
                 visitedSet.set(vIdx);
 
                 // enforce memory consistency of expected packet
@@ -293,7 +289,7 @@ namespace flashmoe::subscriber
                 Thus, as we catch up to them, we self-correct
                 our termination bound to avoid a deadlock.
                 */
-                sTB<topo>(args, peerIdx);
+                sTB(args, peerIdx);
                 // set visited bit
                 visitedSet.set(vIdx);
               }
@@ -304,11 +300,11 @@ namespace flashmoe::subscriber
               signal = f.load(cuda::memory_order::acquire);
               const auto sigPayload = cuda::std::bit_cast<SignalPayload<PacketStage::initial>>(signal);
               if (sigPayload.stateNumber == currentStateNumber) {
-                sTB<topo>(args, peerIdx, sigPayload.totalTilesM);
+                sTB(args, peerIdx, sigPayload.totalTilesM);
                 visitedSet.set(vIdx);
               }
               else if (sbs::ahead(sigPayload.stateNumber, currentStateNumber)) {
-                sTB<topo>(args, peerIdx);
+                sTB(args, peerIdx);
                 // set visited bit
                 visitedSet.set(vIdx);
               }
