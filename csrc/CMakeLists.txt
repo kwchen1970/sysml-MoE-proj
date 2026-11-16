@@ -226,7 +226,8 @@ set_target_properties(testFlashMoE PROPERTIES
 # Experiment variants (override -DFLASHMOE_HYB_VARIANT=<n>):
 # 17=HYB17 keep, 18=seq-B shared-A, 19=reg-gate shared-A, 20=reg-gate two-pass,
 # 21=drop post-gated sync, 22=19+21, 23=19+20 (reg-gate both paths),
-# 24=19 + bias smem prefetch before gated mainloop.
+# 24=19 + bias smem prefetch before gated mainloop,
+# 25=22+20 (reg-gate both paths + drop post-gated sync).
 set(FLASHMOE_HYB_VARIANT "17" CACHE STRING "FlashMoE HYB experiment variant")
 target_compile_definitions(testFlashMoE PRIVATE FLASHMOE_HYB_VARIANT=${FLASHMOE_HYB_VARIANT})
 flash_target_lto(testFlashMoE)

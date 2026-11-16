@@ -127,7 +127,7 @@ namespace flashmoe::processor
 #else
       tileMainloop.gated(workspace, a, b, bV, accGate, accUp, M, N, K, tileCoord);
 #endif
-#if FLASHMOE_HYB_VARIANT != 21 && FLASHMOE_HYB_VARIANT != 22
+#if FLASHMOE_HYB_VARIANT != 21 && FLASHMOE_HYB_VARIANT != 22 && FLASHMOE_HYB_VARIANT != 25
       __syncthreads();
 #endif
 #if FLASHMOE_HYB_VARIANT == 24
@@ -140,7 +140,7 @@ namespace flashmoe::processor
 #endif
       const auto c_frag = accGate.get_results();
       constexpr int accum_size = cublasdx::size(c_frag);
-#if FLASHMOE_HYB_VARIANT == 19 || FLASHMOE_HYB_VARIANT == 22 || FLASHMOE_HYB_VARIANT == 23 || FLASHMOE_HYB_VARIANT == 24
+#if FLASHMOE_HYB_VARIANT == 19 || FLASHMOE_HYB_VARIANT == 22 || FLASHMOE_HYB_VARIANT == 23 || FLASHMOE_HYB_VARIANT == 24 || FLASHMOE_HYB_VARIANT == 25
       // ElementC register-resident silu(gate); keep AB+C smem sizing slack (HYB4 drop failed).
       auto gate_act = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
@@ -192,7 +192,7 @@ namespace flashmoe::processor
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accumulator);
       const auto c_frag = accumulator.get_results();
       constexpr int accum_size = cublasdx::size(c_frag);
-#if FLASHMOE_HYB_VARIANT == 20 || FLASHMOE_HYB_VARIANT == 23
+#if FLASHMOE_HYB_VARIANT == 20 || FLASHMOE_HYB_VARIANT == 23 || FLASHMOE_HYB_VARIANT == 25
       // Two-pass: keep silu(gate) in ElementC registers across the up GEMM.
       auto gate_act = cublasdx::make_fragment_like<ElementC>(accumulator.get_results());
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
