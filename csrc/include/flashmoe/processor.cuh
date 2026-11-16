@@ -139,12 +139,14 @@ namespace flashmoe::processor
       });
       auto sGate = cublasdx::make_tensor(reinterpret_cast<ElementC*>(gateCache), BLAS::suggest_layout_smem_c());
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sGate, accumulator);
+      // HYB40 on NCU10: prefetch biasV before two-pass up-GEMM (shared-A unchanged).
+      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
+      auto v_frag = cublasdx::make_fragment_like<ElementC>(accumulator.get_results());
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, v_frag, accumulator);
       tileMainloop(workspace, a, bV, accumulator, M, N, K, tileCoord);
       auto cv_frag = accumulator.get_results();
-      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
-      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accumulator);
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
-        cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
+        cv_frag(i) = cv_frag(i) + loadConv(v_frag(i));
       });
       __syncthreads();
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sGate, d_frag, accumulator);
