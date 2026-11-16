@@ -801,18 +801,17 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI9: EPI7 base + shape-aware GEMM1 pS1=2 for E<=64 only (NCU11).
-  // E=128 keeps pS1=1 (EPI8 thrash). Two-pass pS=1/1. Bar: beat NCU10.
+  // EPI10: different lever — shared-A bK=128 @ pS=1 (wider K tile), not pS deepen.
+  // Two-pass stays bK=64 pS=1. Bar: beat NCU10.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
-  constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
+  constexpr int bKDefault = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
-  constexpr int bK1 = bK0;
   constexpr auto pS = arch >= 900 ? 3 : arch >= 800
     ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
   static_assert(bM >= 1);
-  if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
+  if (H <= bKDefault || H % bKDefault != 0 || H < bN1 || H % bN1 != 0) {
     throw std::invalid_argument("H is invalid");
   }
   if (S < 1 || (S > bM && S % bM != 0)) {
@@ -824,12 +823,17 @@ void drive(const int argc, char** argv) {
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C, auto pS0C, auto pS1C) {
+  auto launch = [&](auto bN0C, auto bK0C, auto pS0C, auto pS1C) {
     constexpr int bN0 = decltype(bN0C)::value;
+    constexpr int bK0 = decltype(bK0C)::value;
+    constexpr int bK1 = bK0;
     constexpr int pS0 = decltype(pS0C)::value;
     constexpr int pS1 = decltype(pS1C)::value;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
+    }
+    if (H <= bK0 || H % bK0 != 0) {
+      throw std::invalid_argument("H is invalid for bK");
     }
     switch (E) {
       case 8:
@@ -873,14 +877,10 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI9/NCU11: pS0=2 always; pS1=2 only when E<=64
-    if (E <= 64) {
-      launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<2>{});
-    } else {
-      launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
-    }
+    // EPI10: wider K tile instead of pipeline deepen
+    launch(cute::Int<64>{}, cute::Int<128>{}, cute::Int<1>{}, cute::Int<1>{});
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<bKDefault>{}, cute::Int<pS>{}, cute::Int<pS>{});
   }
 }
 
