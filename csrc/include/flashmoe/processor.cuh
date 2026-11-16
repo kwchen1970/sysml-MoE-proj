@@ -23,11 +23,13 @@
 namespace flashmoe::processor
 {
   // fused GEMM, epilogue and data transfer
+  // ARCH6: WriteGmem=false keeps the C tile in workspace smem for fused combine (no staging store).
   template <
     typename TileGEMM,
     typename Activation,
     typename Element,
-    typename ElementC
+    typename ElementC,
+    bool WriteGmem = true
   >
   __forceinline__ __device__
   void fGET(void* __restrict__ const& workspace,
@@ -59,15 +61,22 @@ namespace flashmoe::processor
     cute::for_each(cute::make_int_sequence<accum_size>{}, [&c_frag, &d_frag](auto i) {
       d_frag(i) = storeConv(act(c_frag(i) + loadConv(d_frag(i))));
     });
-    auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
-    // TODO For Optimizing the below copy, TMA may help
-    // rmem -> smem
-    auto sC = cublasdx::make_tensor(static_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
-    __syncthreads();
-    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
-    __syncthreads();
-    // smem -> gmem
-    cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
+    // rmem -> smem (combine-compatible dense row-major when !WriteGmem)
+    if constexpr (!WriteGmem) {
+      using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BN, cute::_1>>;
+      auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
+      __syncthreads();
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
+      __syncthreads();
+    }
+    else {
+      auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
+      auto sC = cublasdx::make_tensor(static_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
+      __syncthreads();
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
+      __syncthreads();
+      cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(sC, gC);
+    }
   }
 
   template <
@@ -365,89 +374,73 @@ namespace flashmoe::processor
           const auto* bP = expertDownWeights + expertWeightSize * task.localExpertIdx();
           auto* __restrict__ cP = reinterpret_cast<Element*>(task.cData[1]);
           const auto* __restrict__ biasP = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
-          fGET<TileGEMM1, cublasdx::identity>(workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
-          __syncthreads();
           constexpr int bM = cute::get<0>(typename TileGEMM1::TileShape{});
           constexpr int bN = cute::get<1>(typename TileGEMM1::TileShape{});
           constexpr int Arch = TileGEMM1::TileArch::value;
           const auto mCoord = task.tileIdx / tilesN1;
           const auto nCoord = task.tileIdx % tilesN1;
-          // ARCH5 NVLINK: fuse combine into this GEMM1 CTA (same tile parallelism;
-          // does not steal GEMM0 CTA time — GEMM0 path unchanged).
           if constexpr (topo == Topology::NVLINK_ONLY) {
+            // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
+            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
+            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
+              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
-            const auto* __restrict__ tokens = reinterpret_cast<Element*>(task.cData[1])
-              + static_cast<size_t>(tokenBatchStart) * static_cast<size_t>(H);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            combine<bM, bN, Arch, threads, combineMode>(S, H, workspace, tokenIds, moeOutput, tokens,
-              task.tileSize(), tileCoord);
-            __syncthreads();
-          }
-          if (!threadIdx.x) {
-            if (topo == Topology::MIXED && task.isPeerRemote()) {
-              // Remote; check if we need to do the transfer
-              cuda::atomic_ref<uint, cuda::thread_scope_device> tileSync{*(pA.tQS + task.syncIdx)};
-              const auto doTransfer = tileSync.fetch_add(1,cuda::memory_order_acq_rel) + 1 == (tilesN0 + tilesN1);
-              if (doTransfer) {
-                // read and flip the current bit
-                const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, 0);
-                const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
-                // Pack payload into single signal word of 8 bytes
-                const auto flagSignal = SignalPayload<PacketStage::last>{
-                  static_cast<uint>(mCoord),
-                  task.tileSize(),
-                  producerBit,
-                  stateNumber,
-                };
-                const auto sigPayload = cuda::std::bit_cast<uint64_t>(flagSignal);
-                // flip the bit
-                producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, 0) = producerBit;
-                // clear the counter as it would no longer be used in this epoch
-                tileSync.store(0, cuda::memory_order_relaxed);
-                const auto symOffset = static_cast<size_t>(bM) * mCoord * H * sizeof(Element);
-                nvshmem_putmem_signal_nbi(task.rcData + symOffset,
-                                          task.cData[1] + symOffset,
-                                          static_cast<size_t>(task.tileSize() * H) * sizeof(Element),
-                                          task.flags,
-                                          sigPayload,
-                                          NVSHMEM_SIGNAL_SET,
-                                          task.pe());
-              }
-            }
-            else {
-              // read and flip the current bit
+            combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
+              static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
+            if (!threadIdx.x) {
               const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
               const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
-              // Pack payload into single signal word of 8 bytes
-              const auto flagSignal = SignalPayload<PacketStage::last>{
-                static_cast<uint>(mCoord),
-                task.tileSize(),
-                producerBit,
-                stateNumber,
-              };
-              const auto sigPayload = cuda::std::bit_cast<uint64_t>(flagSignal);
-              // flip the bit
               producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
-              // individual tile, no batching here,
-              // note, this CTA alone did the transfer over NVlink
-              cuda::atomic_ref<uint64_t, cuda::thread_scope_system> remoteFlags{*task.flags};
-              remoteFlags.store(sigPayload, cuda::memory_order_release);
-              if constexpr (topo == Topology::NVLINK_ONLY) {
-                // ARCH5: flip consumer sense here (subscriber skips combine flags).
-                constexpr uint subCount = threads - WARP_SIZE; // == OS subscriberCount
-                const auto flagIdx = static_cast<uint>(nCoord) * flagColStride
-                  + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord);
-                const auto slotIdx = flagIdx / subCount;
-                const auto sBIdx = (flagIdx % subCount) + (slotIdx / 32u) * subCount;
-                const auto bIdx = slotIdx % 32u;
-                cuda::atomic_ref<uint, cuda::thread_scope_device> senseWord{consumerCombineBitMap[sBIdx].storage};
-                senseWord.fetch_xor(1u << bIdx, cuda::memory_order_relaxed);
-              }
+              // No flag store — subscriber pre-visits combine flags; sense flipped in-place.
+              constexpr uint subCount = threads - WARP_SIZE;
+              const auto flagIdx = static_cast<uint>(nCoord) * flagColStride
+                + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord);
+              const auto slotIdx = flagIdx / subCount;
+              const auto sBIdx = (flagIdx % subCount) + (slotIdx / 32u) * subCount;
+              const auto bIdx = slotIdx % 32u;
+              cuda::atomic_ref<uint, cuda::thread_scope_device> senseWord{consumerCombineBitMap[sBIdx].storage};
+              senseWord.fetch_xor(1u << bIdx, cuda::memory_order_relaxed);
             }
           }
-          __syncthreads();
+          else {
+            fGET<TileGEMM1, cublasdx::identity>(workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
+            __syncthreads();
+            if (!threadIdx.x) {
+              if (task.isPeerRemote()) {
+                cuda::atomic_ref<uint, cuda::thread_scope_device> tileSync{*(pA.tQS + task.syncIdx)};
+                const auto doTransfer = tileSync.fetch_add(1,cuda::memory_order_acq_rel) + 1 == (tilesN0 + tilesN1);
+                if (doTransfer) {
+                  const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, 0);
+                  const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
+                  const auto flagSignal = SignalPayload<PacketStage::last>{
+                    static_cast<uint>(mCoord), task.tileSize(), producerBit, stateNumber,
+                  };
+                  const auto sigPayload = cuda::std::bit_cast<uint64_t>(flagSignal);
+                  producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, 0) = producerBit;
+                  tileSync.store(0, cuda::memory_order_relaxed);
+                  const auto symOffset = static_cast<size_t>(bM) * mCoord * H * sizeof(Element);
+                  nvshmem_putmem_signal_nbi(task.rcData + symOffset,
+                                            task.cData[1] + symOffset,
+                                            static_cast<size_t>(task.tileSize() * H) * sizeof(Element),
+                                            task.flags, sigPayload, NVSHMEM_SIGNAL_SET, task.pe());
+                }
+              }
+              else {
+                const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
+                const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
+                const auto flagSignal = SignalPayload<PacketStage::last>{
+                  static_cast<uint>(mCoord), task.tileSize(), producerBit, stateNumber,
+                };
+                producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
+                cuda::atomic_ref<uint64_t, cuda::thread_scope_system> remoteFlags{*task.flags};
+                remoteFlags.store(cuda::std::bit_cast<uint64_t>(flagSignal), cuda::memory_order_release);
+              }
+            }
+            __syncthreads();
+          }
         }
         break;
         case TaskType::combine: {
