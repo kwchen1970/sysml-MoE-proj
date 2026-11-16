@@ -207,14 +207,10 @@ namespace flashmoe::subscriber
   };
 
   // Self-correct Termination Bound
-  // ARCH7: NVLINK_ONLY steals GEMM1 (scheduler bound is tilesN0-only); callers
-  // pass gemm1Scheduled=false so superfluous accounting matches taskBound.
   __device__ __forceinline__
-  void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0,
-           const bool gemm1Scheduled = true) {
+  void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0) {
     if (!atomicTAS<cuda::thread_scope_block>(args.status + peer)) {
-      const auto perRow = gemm1Scheduled ? (args.tilesN0 + args.tilesN1) : args.tilesN0;
-      const auto superfluous = perRow * ((args.nLx * args.ecTilesM) - peerTaskTiles);
+      const auto superfluous = (args.tilesN0 + args.tilesN1) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
       atomicSub_block(args.taskCount, superfluous);
     }
   }
@@ -255,8 +251,6 @@ namespace flashmoe::subscriber
         if (laneId == 0) {
           auto visitedSet = bitSet[warpId + vSIdx * sNW];
           if (!visitedSet.get(vIdx)) {
-            // ARCH7: NVLINK_ONLY steals GEMM1 → sTB corrects tilesN0-only expectant work.
-            constexpr bool gemm1Scheduled = (topo != Topology::NVLINK_ONLY);
             if (topo == Topology::MIXED && pLI.isRemote) {
               // RDMA peer
               signal = nvshmem_signal_fetch(flags + flagIdx);
@@ -264,7 +258,7 @@ namespace flashmoe::subscriber
               if (sigPayload.stateNumber == currentStateNumber) {
                 // set visited bit
                 // self-correct the termination bound
-                sTB(args, peerIdx, sigPayload.totalTilesM, gemm1Scheduled);
+                sTB(args, peerIdx, sigPayload.totalTilesM);
                 visitedSet.set(vIdx);
 
                 // enforce memory consistency of expected packet
@@ -295,7 +289,7 @@ namespace flashmoe::subscriber
                 Thus, as we catch up to them, we self-correct
                 our termination bound to avoid a deadlock.
                 */
-                sTB(args, peerIdx, 0, gemm1Scheduled);
+                sTB(args, peerIdx);
                 // set visited bit
                 visitedSet.set(vIdx);
               }
@@ -306,11 +300,11 @@ namespace flashmoe::subscriber
               signal = f.load(cuda::memory_order::acquire);
               const auto sigPayload = cuda::std::bit_cast<SignalPayload<PacketStage::initial>>(signal);
               if (sigPayload.stateNumber == currentStateNumber) {
-                sTB(args, peerIdx, sigPayload.totalTilesM, gemm1Scheduled);
+                sTB(args, peerIdx, sigPayload.totalTilesM);
                 visitedSet.set(vIdx);
               }
               else if (sbs::ahead(sigPayload.stateNumber, currentStateNumber)) {
-                sTB(args, peerIdx, 0, gemm1Scheduled);
+                sTB(args, peerIdx);
                 // set visited bit
                 visitedSet.set(vIdx);
               }
