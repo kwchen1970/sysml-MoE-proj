@@ -11,6 +11,7 @@
 #include <nvshmem.h>
 
 #include "combine.cuh" //  combine function
+#include "infra/bitset.cuh"
 #include "infra/constants.cuh"
 #include "infra/packed.cuh"
 #include "infra/signal.cuh"
@@ -254,6 +255,9 @@ namespace flashmoe::processor
              const TPS* __restrict__ const& tokenIndices, // [E, roundEC]
              Element* __restrict__ const& moeOutput,
              const PBM& producerBitMap,
+             BitSet* __restrict__ const& consumerCombineBitMap, // ARCH5 sense flips
+             const uint& /*E*/,
+             const uint& ecTilesM,
              const uint8_t& stateNumber,
              const Heap& symHeap, const ProcessorArgs& pA) {
     static_assert(sizeof(Task) % sizeof(uint4) == 0 && alignof(Task) % alignof(uint4) == 0);
@@ -348,39 +352,6 @@ namespace flashmoe::processor
               notifyNext<PeerConnectivity::remote, threads>(workspace, task, tQ, tilesN1, flagColStride,
                 offset, pA.tQH);
             }
-            else if constexpr (topo == Topology::NVLINK_ONLY) {
-              // ARCH4: inline GEMM1 tile 0 on this CTA while GEMM0 staging A is hot.
-              // Keep tilesN1-1 GEMM1 tasks scheduler-parallel (avoid ARCH1 full serialize).
-              const auto* aP1 = reinterpret_cast<const Element*>(task.cData[0]);
-              const auto* bP1 = expertDownWeights + expertWeightSize * task.localExpertIdx();
-              auto* __restrict__ cP1 = reinterpret_cast<Element*>(task.cData[1]);
-              const auto* __restrict__ biasP1 = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
-              fGET<TileGEMM1, cublasdx::identity>(workspace, aP1, bP1, cP1, biasP1,
-                task.M(), H, I, static_cast<int>(offset));
-              __syncthreads();
-              if (!threadIdx.x) {
-                const auto mCoord = offset / tilesN1;
-                const auto nCoord = 0u;
-                const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
-                const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
-                const auto flagSignal = SignalPayload<PacketStage::last>{
-                  static_cast<uint>(mCoord),
-                  task.tileSize(),
-                  producerBit,
-                  stateNumber,
-                };
-                producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
-                cuda::atomic_ref<uint64_t, cuda::thread_scope_system> remoteFlags{*task.flags};
-                remoteFlags.store(cuda::std::bit_cast<uint64_t>(flagSignal), cuda::memory_order_release);
-              }
-              __syncthreads();
-              if (tilesN1 > 1) {
-                Task rest = task;
-                rest.flags = task.flags + flagColStride; // nCoord starts at 1
-                notifyNext<PeerConnectivity::p2p, threads>(workspace, rest, tQ, tilesN1 - 1,
-                  flagColStride, offset + 1, pA.tQH);
-              }
-            }
             else {
               notifyNext<PeerConnectivity::p2p, threads>(workspace, task, tQ, tilesN1, flagColStride,
                 offset, pA.tQH);
@@ -396,10 +367,25 @@ namespace flashmoe::processor
           const auto* __restrict__ biasP = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
           fGET<TileGEMM1, cublasdx::identity>(workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
           __syncthreads();
+          constexpr int bM = cute::get<0>(typename TileGEMM1::TileShape{});
+          constexpr int bN = cute::get<1>(typename TileGEMM1::TileShape{});
+          constexpr int Arch = TileGEMM1::TileArch::value;
+          const auto mCoord = task.tileIdx / tilesN1;
+          const auto nCoord = task.tileIdx % tilesN1;
+          // ARCH5 NVLINK: fuse combine into this GEMM1 CTA (same tile parallelism;
+          // does not steal GEMM0 CTA time — GEMM0 path unchanged).
+          if constexpr (topo == Topology::NVLINK_ONLY) {
+            const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
+            const auto* __restrict__ tokens = reinterpret_cast<Element*>(task.cData[1])
+              + static_cast<size_t>(tokenBatchStart) * static_cast<size_t>(H);
+            const auto* __restrict__ tokenIds = tokenIndices
+              + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
+            const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
+            combine<bM, bN, Arch, threads, combineMode>(S, H, workspace, tokenIds, moeOutput, tokens,
+              task.tileSize(), tileCoord);
+            __syncthreads();
+          }
           if (!threadIdx.x) {
-            constexpr int bM = cute::get<0>(typename TileGEMM1::TileShape{});
-            const auto mCoord = task.tileIdx / tilesN1;
-            const auto nCoord = task.tileIdx % tilesN1;
             if (topo == Topology::MIXED && task.isPeerRemote()) {
               // Remote; check if we need to do the transfer
               cuda::atomic_ref<uint, cuda::thread_scope_device> tileSync{*(pA.tQS + task.syncIdx)};
@@ -410,7 +396,7 @@ namespace flashmoe::processor
                 const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
                 // Pack payload into single signal word of 8 bytes
                 const auto flagSignal = SignalPayload<PacketStage::last>{
-                  mCoord,
+                  static_cast<uint>(mCoord),
                   task.tileSize(),
                   producerBit,
                   stateNumber,
@@ -436,7 +422,7 @@ namespace flashmoe::processor
               const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
               // Pack payload into single signal word of 8 bytes
               const auto flagSignal = SignalPayload<PacketStage::last>{
-                mCoord,
+                static_cast<uint>(mCoord),
                 task.tileSize(),
                 producerBit,
                 stateNumber,
@@ -448,6 +434,17 @@ namespace flashmoe::processor
               // note, this CTA alone did the transfer over NVlink
               cuda::atomic_ref<uint64_t, cuda::thread_scope_system> remoteFlags{*task.flags};
               remoteFlags.store(sigPayload, cuda::memory_order_release);
+              if constexpr (topo == Topology::NVLINK_ONLY) {
+                // ARCH5: flip consumer sense here (subscriber skips combine flags).
+                constexpr uint subCount = threads - SCHEDULER_COUNT;
+                const auto flagIdx = static_cast<uint>(nCoord) * flagColStride
+                  + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord);
+                const auto slotIdx = flagIdx / subCount;
+                const auto sBIdx = (flagIdx % subCount) + (slotIdx / 32u) * subCount;
+                const auto bIdx = slotIdx % 32u;
+                cuda::atomic_ref<uint, cuda::thread_scope_device> senseWord{consumerCombineBitMap[sBIdx].storage};
+                senseWord.fetch_xor(1u << bIdx, cuda::memory_order_relaxed);
+              }
             }
           }
           __syncthreads();

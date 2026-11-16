@@ -247,7 +247,9 @@ namespace flashmoe::moe
     (flashWorkspace, kArgs.S, kArgs.H, kArgs.I, roundEC, kArgs.flagColStride, tilesN0, tilesN1,
       expertUp, expertUpV,  biasUp, biasUpV,
       static_cast<AccumType>(kArgs.swishAlpha), static_cast<AccumType>(kArgs.swishBeta),
-      expertDown, biasDown, ctx.tokenIndices, moeOut, producerBM, stateNumber, symHeap, pA);
+      expertDown, biasDown, ctx.tokenIndices, moeOut, producerBM,
+      ctx.consumerCombineBitMap, static_cast<uint>(kArgs.E), static_cast<uint>(ecTilesM),
+      stateNumber, symHeap, pA);
     __syncthreads();
     if (!threadIdx.x) {
       // for the next epoch

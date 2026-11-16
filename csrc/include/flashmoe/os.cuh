@@ -149,27 +149,22 @@ namespace flashmoe::os
     auto* __restrict__ eCs = reinterpret_cast<int*>(scratch);
     if (!threadIdx.x) {
       // Expert computation expectant tasks
-      // actual amount unknown a priori, so we use upper bound and self-correct at runtime.
-      // ARCH4 (NVLINK_ONLY): one GEMM1 tile per M-row runs inline on the completing
-      // GEMM0 CTA, so scheduler-visible GEMM1 count is tilesN1-1 (0 if tilesN1==1).
-      if constexpr (topo == Topology::NVLINK_ONLY) {
-        const auto gemm1Sched = tilesN1 > 0 ? tilesN1 - 1 : 0;
-        *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + gemm1Sched);
-      }
-      else {
-        *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + tilesN1);
-      }
+      // actual amount unknown a priori, so we use upper bound and self-correct at runtime
+      *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + tilesN1);
     }
     for (uint i = threadIdx.x; i < E; i += threads) {
       eCs[i] = expertCounts[i];
     }
     __syncthreads();
     // Combine tasks
-    // actual amount known a priori
-    for (uint i = threadIdx.x; i < E; i += threads) {
-      const auto eCount = cute::min(eCs[i], EC);
-      const auto eCt = cute::ceil_div(eCount, bM);
-      atomicAdd_block(taskBound, eCt * tilesN1);
+    // ARCH5 NVLINK_ONLY: combine is fused into each GEMM1 CTA — do not schedule
+    // separate combine tasks (preserves full GEMM1 parallelism, steals no GEMM0 time).
+    if constexpr (topo != Topology::NVLINK_ONLY) {
+      for (uint i = threadIdx.x; i < E; i += threads) {
+        const auto eCount = cute::min(eCs[i], EC);
+        const auto eCt = cute::ceil_div(eCount, bM);
+        atomicAdd_block(taskBound, eCt * tilesN1);
+      }
     }
     if (threadIdx.x < subscriberCount) {
       const auto nRows = ecTilesM * E;
@@ -182,6 +177,11 @@ namespace flashmoe::os
           const auto flagIdx = (prefix + threadIdx.x) + (j * subscriberCount);
           if (flagIdx >= ecSignalCount * E) {
             break;
+          }
+          if constexpr (topo == Topology::NVLINK_ONLY) {
+            // ARCH5: GEMM1 owns combine + sense; final subscriber skips these flags.
+            bitset.set(j);
+            continue;
           }
           const auto expertIdx = (flagIdx % nRows) / ecTilesM;
           const bool isRemote = eL[expertIdx].isRemote;
@@ -262,8 +262,12 @@ namespace flashmoe::os
       subscriber::start<topo, subscriberCount, bM, ElementC>(symHeap, args, fSbSL);
     }
     __syncthreads();
-    for (uint i = threadIdx.x; i < bScL; i += threads) {
-      ctx.consumerCombineBitMap[i] = senseBitset[i];
+    // ARCH5 NVLINK: GEMM1 CTAs flip sense directly in ctx.consumerCombineBitMap;
+    // do not clobber with the unused subscriber smem mirror.
+    if constexpr (topo != Topology::NVLINK_ONLY) {
+      for (uint i = threadIdx.x; i < bScL; i += threads) {
+        ctx.consumerCombineBitMap[i] = senseBitset[i];
+      }
     }
     if (!threadIdx.x) {
       // advance for next epoch
