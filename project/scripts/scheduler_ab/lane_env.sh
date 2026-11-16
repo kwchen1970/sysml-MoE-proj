@@ -32,14 +32,19 @@ export AB_SCRIPTS="${SCRATCH_AB}/tool/scripts/scheduler_ab"
 mkdir -p "$AB_JOBS" "$AB_BINS" "$AB_NCU" "$AB_NOISE" "$AB_PARSED"
 
 # Convenience refs to keep-stack binaries (symlink into lane bins).
-# HYB22 currently lives under ab/main/bins until promoted to shared ab/.
+# Never overwrite a real binary — only create missing links or refresh symlinks.
 for tag in hyb22 hyb17 hyb2 hyb14 bk64; do
   src="${SCRATCH_AB}/testFlashMoE.${tag}"
   if [[ ! -x "$src" ]]; then
     src="${SCRATCH_AB}/main/bins/testFlashMoE.${tag}"
   fi
   dst="${AB_BINS}/testFlashMoE.${tag}"
-  if [[ -x "$src" && ! -e "$dst" ]]; then
+  if [[ ! -x "$src" ]]; then
+    continue
+  fi
+  if [[ -L "$dst" ]]; then
+    ln -sfn "$src" "$dst"
+  elif [[ ! -e "$dst" ]]; then
     ln -sf "$src" "$dst"
   fi
 done
