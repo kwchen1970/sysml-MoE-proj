@@ -187,48 +187,36 @@ namespace flashmoe::processor
     }
   };
 
+  // ARCH11: publish GEMM1 tasks straight to the global queue (no smem staging bounce).
+  // Cuts GEMM0→scheduler coupling: one cooperative gmem store + one barrier + head bump,
+  // instead of regs→smem→sync→smem→gmem→sync→notify. Workspace unused; stay race-free
+  // (same CTA still owns the publish; no inter-CTA steal).
   template <
     PeerConnectivity p,
     int threads
   >
   __device__ __forceinline__
-  void notifyNext(void* __restrict__ const& workspace, const Task& task, Task* __restrict__ const& tQ,
+  void notifyNext(void* __restrict__ const& /*workspace*/, const Task& task, Task* __restrict__ const& tQ,
                   const uint& tasks, const uint& flagColStride,
                   const uint& offset, uint* __restrict__ const& tQH) {
     auto ingredients = task.ingredients;
     ingredients.taskType = TaskType::GEMM1;
-    // registers -> shared memory
     static_assert(sizeof(Task) % sizeof(uint4) == 0 && alignof(Task) % sizeof(uint4) == 0);
     static_assert(cuda::std::is_trivially_copyable_v<Task>);
     using TVT = cutlass::AlignedArray<uint4, sizeof(Task) / sizeof(uint4), alignof(Task)>;
-    auto* __restrict__ sTQ = static_cast<TVT*>(workspace);
-    for (int i = threadIdx.x; i < tasks; i += threads) {
-      const auto tvv = cuda::std::bit_cast<TVT>(
+    auto* __restrict__ gTQ = reinterpret_cast<TVT*>(tQ);
+    for (int i = threadIdx.x; i < static_cast<int>(tasks); i += threads) {
+      gTQ[i] = cuda::std::bit_cast<TVT>(
         Task{
           ingredients, task.cData[0], task.cData, task.rcData,
           task.flags + (p == PeerConnectivity::remote ? 0 : i * flagColStride), // col-major indexing
           task.syncIdx, offset + i
-      });
-      sTQ[i] = tvv;
-    }
-    __syncthreads();
-    // shared memory to global memory
-    constexpr int nRows = sizeof(Task) / sizeof(uint4);
-    const uint numElems = tasks * nRows; // TODO <- store this in constant memory
-    // project TaskQ as a [tasks, nRows] matrix of 128B elements
-    auto gT = cute::make_tensor(cute::make_gmem_ptr(reinterpret_cast<uint4*>(tQ)),
-                                cute::make_layout(cute::make_shape(tasks, nRows), cute::LayoutRight{}));
-    auto sT = cute::make_tensor(cute::make_smem_ptr(static_cast<uint4*>(workspace)),
-                                cute::make_layout(cute::make_shape(tasks, nRows), cute::LayoutRight{}));
-    for (int i = threadIdx.x; i < numElems; i += threads) {
-      const auto rowIdx = i / nRows;
-      const auto colIdx = i % nRows;
-      gT(rowIdx, colIdx) = sT(rowIdx, colIdx);
+        });
     }
     __syncthreads();
     if (!threadIdx.x) {
       cuda::atomic_ref<uint, cuda::thread_scope_device> tqh{*(tQH + task.syncIdx)};
-      // notify scheduler
+      // notify scheduler after all Task stores complete
       cuda::std::ignore = tqh.fetch_add(tasks, cuda::memory_order_release);
     }
   }
@@ -380,21 +368,15 @@ namespace flashmoe::processor
           const auto mCoord = task.tileIdx / tilesN1;
           const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
-            // ARCH10: structural fused dataflow on ARCH6 smem-resident C.
-            // Prefetch routing ids into CTA shared BEFORE GEMM1 so TPS gmem latency
-            // overlaps the whole mainloop; densify barrier publishes C and ids together;
-            // combine RedAdds with SkipGmemLoad+IdsReady (no second id load / barrier).
+            // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
+            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
+            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
+              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
-            __shared__ TPS fuseIds[bM];
-            for (int i = static_cast<int>(threadIdx.x); i < bM; i += threads) {
-              fuseIds[i] = tokenIds[i];
-            }
-            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
-              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            combine<bM, bN, Arch, threads, combineMode, true, true>(S, H, workspace, fuseIds, moeOutput,
+            combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
             if (!threadIdx.x) {
               const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
