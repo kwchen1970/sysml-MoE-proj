@@ -79,9 +79,7 @@ namespace flashmoe::moe
     constexpr int bM = bM0;
     using TileG0 = tile::CollectiveMainloop<bM0, bN0, bK0, Config::Arch::value, Element,
       typename Config::AccumType, threads, pSK0>;
-    // EPI3: asymmetric gated slack — shared-A (bN0<=64) needs only ~8 KiB
-    // (EPI2@8192 mid OK); two-pass (bN0>64) still needs full SharedSizeC.
-    // FLASHMOE_GATED_SMEM_SLACK overrides when >=0 (debug); -1 = asymmetric default.
+    // EPI7/NCU10: shared-A reg-gate → no gateCache surcharge; two-pass keeps C slab.
 #ifndef FLASHMOE_GATED_SMEM_SLACK
 #define FLASHMOE_GATED_SMEM_SLACK (-1)
 #endif
@@ -90,7 +88,7 @@ namespace flashmoe::moe
       : TileG0::SharedSizeAB::value;
     constexpr auto gateSlack = !(mt == MLPMatmulType::gated) ? 0
       : (FLASHMOE_GATED_SMEM_SLACK >= 0 ? FLASHMOE_GATED_SMEM_SLACK
-         : (bN0 <= 64 ? 8192 : TileG0::SharedSizeC::value));
+         : (bN0 <= 64 ? 0 : TileG0::SharedSizeC::value));
     constexpr auto GEMM0Sz = cutlass::round_up(
       cute::max(gemm0AB, TileG0::SharedSizeC::value) + gateSlack, MAX_ALIGNMENT);
     using TileG1 = tile::CollectiveMainloop<bM1, bN1, bK1, Config::Arch::value, Element,

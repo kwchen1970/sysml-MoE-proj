@@ -373,13 +373,13 @@ void kickstart(const Options& opts) {
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
-  // EPI3 asymmetric slack (see moe.cuh); -1 default.
+  // EPI7/NCU10: shared-A gateSlack=0; two-pass keeps C slab (see moe.cuh).
 #ifndef FLASHMOE_GATED_SMEM_SLACK
 #define FLASHMOE_GATED_SMEM_SLACK (-1)
 #endif
   constexpr auto gateSlack = (mt != flashmoe::MLPMatmulType::gated) ? 0
     : (FLASHMOE_GATED_SMEM_SLACK >= 0 ? FLASHMOE_GATED_SMEM_SLACK
-       : (bN0 <= 64 ? 8192 : static_cast<int>(TileG0Host::SharedSizeC::value)));
+       : (bN0 <= 64 ? 0 : static_cast<int>(TileG0Host::SharedSizeC::value)));
   constexpr auto GEMM0Sz = cutlass::round_up(
     cute::max(gemm0AB, TileG0Host::SharedSizeC::value) + gateSlack,
     flashmoe::MAX_ALIGNMENT);
@@ -801,16 +801,16 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI6: EPI1 epilogue + asymmetric slack; shared-A I<4096 (revert EPI5).
-  // Retry GEMM1-only pS1=2 with fixed env (EPI4 never measured). Bar: HYB17.
+  // EPI7: fold NCU10 — shared-A GEMM0 pS=2 (reg-gate frees gateCache);
+  // GEMM1 stays pS=1; two-pass pS0=1. Bar: beat NCU10 (−2.2% vs HYB17).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
-  constexpr auto pS0 = arch >= 900 ? 3 : arch >= 800
+  // Default pS for two-pass / GEMM1; shared-A overrides pS0=2 at launch.
+  constexpr auto pS = arch >= 900 ? 3 : arch >= 800
     ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1;
-  constexpr auto pS1 = arch >= 900 ? 3 : arch >= 800 ? 2 : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
   static_assert(bM >= 1);
   if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
@@ -825,8 +825,10 @@ void drive(const int argc, char** argv) {
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C) {
+  auto launch = [&](auto bN0C, auto pS0C) {
     constexpr int bN0 = decltype(bN0C)::value;
+    constexpr int pS0 = decltype(pS0C)::value;
+    constexpr int pS1 = pS; // GEMM1: gated default (NCU10)
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
     }
@@ -872,9 +874,10 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{});
+    // NCU10: spend freed gateCache on GEMM0 pS=2
+    launch(cute::Int<64>{}, cute::Int<2>{});
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{});
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
   }
 }
 
