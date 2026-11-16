@@ -372,8 +372,13 @@ void kickstart(const Options& opts) {
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
+#if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 29
+  constexpr auto gemm0ExtraC = (mt == flashmoe::MLPMatmulType::gated ? 2 : 0);
+#else
+  constexpr auto gemm0ExtraC = (mt == flashmoe::MLPMatmulType::gated ? 1 : 0);
+#endif
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
-    + (mt == flashmoe::MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0),
+    + gemm0ExtraC * sizeof(Element) * bM * bN0,
     flashmoe::MAX_ALIGNMENT);
   constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
     sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);

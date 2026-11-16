@@ -223,6 +223,9 @@ set_target_properties(testFlashMoE PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON
         CUDA_RESOLVE_DEVICE_SYMBOLS ON
 )
+# 29=bias smem prefetch before gated (HYB17 epilogue kept).
+set(FLASHMOE_HYB_VARIANT "17" CACHE STRING "FlashMoE HYB experiment variant")
+target_compile_definitions(testFlashMoE PRIVATE FLASHMOE_HYB_VARIANT=${FLASHMOE_HYB_VARIANT})
 flash_target_lto(testFlashMoE)
 
 # WAR for build failure

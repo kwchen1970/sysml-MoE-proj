@@ -10,6 +10,10 @@
 #include <cuda/atomic>
 #include <nvshmem.h>
 
+#ifndef FLASHMOE_HYB_VARIANT
+#define FLASHMOE_HYB_VARIANT 17
+#endif
+
 #include "combine.cuh" //  combine function
 #include "infra/constants.cuh"
 #include "infra/packed.cuh"
@@ -100,11 +104,29 @@ namespace flashmoe::processor
           TileGEMM::SharedSizeABGated::value), TileGEMM::GeneralAlignment::value);
       auto accGate = BLAS::suggest_accumulator();
       auto accUp = BLAS::suggest_accumulator();
+#if FLASHMOE_HYB_VARIANT == 29
+      // Prefetch gate+up biases into C-sized slabs past AB before the mainloop.
+      auto sBiasG = cublasdx::make_tensor(reinterpret_cast<ElementC*>(gateCache), BLAS::suggest_layout_smem_c());
+      auto sBiasV = cublasdx::make_tensor(
+        reinterpret_cast<ElementC*>(gateCache + TileGEMM::SharedSizeC::value), BLAS::suggest_layout_smem_c());
+      {
+        const auto gD0 = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
+        const auto gV0 = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
+        cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(gD0, sBiasG);
+        cublasdx::copy<BLAS, cublasdx::alignment_of<BLAS>::c>(gV0, sBiasV);
+      }
+      __syncthreads();
+#endif
       tileMainloop.gated(workspace, a, b, bV, accGate, accUp, M, N, K, tileCoord);
       __syncthreads();
+#if FLASHMOE_HYB_VARIANT == 29
+      auto d_frag = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sBiasG, d_frag, accGate);
+#else
       const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
       auto d_frag = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accGate);
+#endif
       const auto c_frag = accGate.get_results();
       constexpr int accum_size = cublasdx::size(c_frag);
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
@@ -114,8 +136,12 @@ namespace flashmoe::processor
       auto sGate = cublasdx::make_tensor(reinterpret_cast<ElementC*>(gateCache), BLAS::suggest_layout_smem_c());
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sGate, accGate);
       auto cv_frag = accUp.get_results();
+#if FLASHMOE_HYB_VARIANT == 29
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sBiasV, d_frag, accUp);
+#else
       const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accUp);
+#endif
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
         cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
       });
