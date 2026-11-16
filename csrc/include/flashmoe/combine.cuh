@@ -62,6 +62,7 @@ namespace flashmoe
       cublasdx::copy<threads, ElementAlignment<Element, bN>>(threadIdx.x, gC, sC);
       cublasdx::copy_wait();
     }
+    // Publishes stIds; when SkipGmemLoad also publishes ARCH6/NCU21 sC from fGET.
     __syncthreads();
     if constexpr (c == CombineMode::single) {
       using VTD = VectorTypeDescriptor<typename RawType<Element>::type, ElementAlignment<Element, bN>>;
