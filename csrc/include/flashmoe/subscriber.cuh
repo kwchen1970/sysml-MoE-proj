@@ -131,15 +131,21 @@ namespace flashmoe::subscriber
       auto* rcData = sHeap + heap.advanceOffset<1, 1>(args.epRank, ingredients.localExpertIdx);
       auto* intraStaging = sHeap + heap.advanceOffset<1, 0>(peer, ingredients.localExpertIdx);
       taskResults[1] = p == PeerConnectivity::remote ? intraStaging : rcData;
-      const auto wT = fTilesM * args.tilesN0;
+      // ARCH2: emit 2-wide GEMM0 tasks (pair consecutive N0 tiles of a row).
+      // Halves doorbell round-trips for GEMM0 while keeping GEMM1 scheduler-parallel.
+      const auto pairedN0 = (args.tilesN0 + 1U) / 2U;
+      const auto wT = fTilesM * pairedN0;
       const auto fS = wT / WARP_SIZE + (laneId < wT % WARP_SIZE);
-      const auto rT = args.tilesN0 % WARP_SIZE;
-      const auto lS = args.tilesN0 / WARP_SIZE + (rT > 0 ? laneId < rT : 0);
+      const auto rT = pairedN0 % WARP_SIZE;
+      const auto lS = pairedN0 / WARP_SIZE + (rT > 0 ? laneId < rT : 0);
       const auto tSlice = fS + (routedTokens % bM == 0 ? 0 : lS);
 
       for (int i = 0; i < fS; ++i) {
-        const auto tileIdx = laneId + i * WARP_SIZE;
-        const auto rowIdx = tileIdx / args.tilesN0;
+        const auto pairIdx = laneId + i * WARP_SIZE;
+        const auto rowIdx = pairIdx / pairedN0;
+        const auto nPair = pairIdx % pairedN0;
+        // tileIdx = first N0 column of the pair; processor also runs tileIdx+1 when in-range.
+        const auto tileIdx = rowIdx * args.tilesN0 + (nPair * 2U);
         const auto syncIdx = sO + rowIdx;
         ingredients.tileSize = bM;
         args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, i)] = Task{
@@ -147,10 +153,12 @@ namespace flashmoe::subscriber
         };
       }
 
-      // residue tile
+      // residue M-row
       if (const auto residue = routedTokens - fTilesM * bM; residue) {
         for (uint j = 0; j < lS; j++) {
-          const auto tileIdx = fTilesM * args.tilesN0 + laneId + j * WARP_SIZE;
+          const auto pairIdx = fTilesM * pairedN0 + laneId + j * WARP_SIZE;
+          const auto nPair = pairIdx % pairedN0;
+          const auto tileIdx = fTilesM * args.tilesN0 + (nPair * 2U);
           const auto syncIdx = sO + fTilesM;
           ingredients.tileSize = static_cast<uint16_t>(residue);
           args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, fS + j)] = Task{
@@ -207,14 +215,12 @@ namespace flashmoe::subscriber
   };
 
   // Self-correct Termination Bound
-  // ARCH1: when GEMM1 is inlined (NVLINK_ONLY processors), expectant expert
-  // work is tilesN0-only; callers pass gemm1Scheduled=false in that case.
+  // ARCH2: GEMM0 expectant work is ceil(tilesN0/2) per row (2-wide tasks).
   __device__ __forceinline__
-  void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0,
-           const bool gemm1Scheduled = true) {
+  void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0) {
     if (!atomicTAS<cuda::thread_scope_block>(args.status + peer)) {
-      const auto perRow = gemm1Scheduled ? (args.tilesN0 + args.tilesN1) : args.tilesN0;
-      const auto superfluous = perRow * ((args.nLx * args.ecTilesM) - peerTaskTiles);
+      const auto gemm0TasksPerRow = (args.tilesN0 + 1U) / 2U;
+      const auto superfluous = (gemm0TasksPerRow + args.tilesN1) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
       atomicSub_block(args.taskCount, superfluous);
     }
   }
@@ -255,8 +261,6 @@ namespace flashmoe::subscriber
         if (laneId == 0) {
           auto visitedSet = bitSet[warpId + vSIdx * sNW];
           if (!visitedSet.get(vIdx)) {
-            // ARCH1: NVLINK_ONLY inlines GEMM1 → sTB corrects tilesN0-only expectant work.
-            constexpr bool gemm1Scheduled = (topo != Topology::NVLINK_ONLY);
             if (topo == Topology::MIXED && pLI.isRemote) {
               // RDMA peer
               signal = nvshmem_signal_fetch(flags + flagIdx);
@@ -264,7 +268,7 @@ namespace flashmoe::subscriber
               if (sigPayload.stateNumber == currentStateNumber) {
                 // set visited bit
                 // self-correct the termination bound
-                sTB(args, peerIdx, sigPayload.totalTilesM, gemm1Scheduled);
+                sTB(args, peerIdx, sigPayload.totalTilesM);
                 visitedSet.set(vIdx);
 
                 // enforce memory consistency of expected packet
@@ -295,7 +299,7 @@ namespace flashmoe::subscriber
                 Thus, as we catch up to them, we self-correct
                 our termination bound to avoid a deadlock.
                 */
-                sTB(args, peerIdx, 0, gemm1Scheduled);
+                sTB(args, peerIdx);
                 // set visited bit
                 visitedSet.set(vIdx);
               }
@@ -306,11 +310,11 @@ namespace flashmoe::subscriber
               signal = f.load(cuda::memory_order::acquire);
               const auto sigPayload = cuda::std::bit_cast<SignalPayload<PacketStage::initial>>(signal);
               if (sigPayload.stateNumber == currentStateNumber) {
-                sTB(args, peerIdx, sigPayload.totalTilesM, gemm1Scheduled);
+                sTB(args, peerIdx, sigPayload.totalTilesM);
                 visitedSet.set(vIdx);
               }
               else if (sbs::ahead(sigPayload.stateNumber, currentStateNumber)) {
-                sTB(args, peerIdx, 0, gemm1Scheduled);
+                sTB(args, peerIdx);
                 // set visited bit
                 visitedSet.set(vIdx);
               }
