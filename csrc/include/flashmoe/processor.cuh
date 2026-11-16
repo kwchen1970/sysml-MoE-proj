@@ -187,36 +187,48 @@ namespace flashmoe::processor
     }
   };
 
-  // ARCH11: publish GEMM1 tasks straight to the global queue (no smem staging bounce).
-  // Cuts GEMM0→scheduler coupling: one cooperative gmem store + one barrier + head bump,
-  // instead of regs→smem→sync→smem→gmem→sync→notify. Workspace unused; stay race-free
-  // (same CTA still owns the publish; no inter-CTA steal).
   template <
     PeerConnectivity p,
     int threads
   >
   __device__ __forceinline__
-  void notifyNext(void* __restrict__ const& /*workspace*/, const Task& task, Task* __restrict__ const& tQ,
+  void notifyNext(void* __restrict__ const& workspace, const Task& task, Task* __restrict__ const& tQ,
                   const uint& tasks, const uint& flagColStride,
                   const uint& offset, uint* __restrict__ const& tQH) {
     auto ingredients = task.ingredients;
     ingredients.taskType = TaskType::GEMM1;
+    // registers -> shared memory
     static_assert(sizeof(Task) % sizeof(uint4) == 0 && alignof(Task) % sizeof(uint4) == 0);
     static_assert(cuda::std::is_trivially_copyable_v<Task>);
     using TVT = cutlass::AlignedArray<uint4, sizeof(Task) / sizeof(uint4), alignof(Task)>;
-    auto* __restrict__ gTQ = reinterpret_cast<TVT*>(tQ);
-    for (int i = threadIdx.x; i < static_cast<int>(tasks); i += threads) {
-      gTQ[i] = cuda::std::bit_cast<TVT>(
+    auto* __restrict__ sTQ = static_cast<TVT*>(workspace);
+    for (int i = threadIdx.x; i < tasks; i += threads) {
+      const auto tvv = cuda::std::bit_cast<TVT>(
         Task{
           ingredients, task.cData[0], task.cData, task.rcData,
           task.flags + (p == PeerConnectivity::remote ? 0 : i * flagColStride), // col-major indexing
           task.syncIdx, offset + i
-        });
+      });
+      sTQ[i] = tvv;
+    }
+    __syncthreads();
+    // shared memory to global memory
+    constexpr int nRows = sizeof(Task) / sizeof(uint4);
+    const uint numElems = tasks * nRows; // TODO <- store this in constant memory
+    // project TaskQ as a [tasks, nRows] matrix of 128B elements
+    auto gT = cute::make_tensor(cute::make_gmem_ptr(reinterpret_cast<uint4*>(tQ)),
+                                cute::make_layout(cute::make_shape(tasks, nRows), cute::LayoutRight{}));
+    auto sT = cute::make_tensor(cute::make_smem_ptr(static_cast<uint4*>(workspace)),
+                                cute::make_layout(cute::make_shape(tasks, nRows), cute::LayoutRight{}));
+    for (int i = threadIdx.x; i < numElems; i += threads) {
+      const auto rowIdx = i / nRows;
+      const auto colIdx = i % nRows;
+      gT(rowIdx, colIdx) = sT(rowIdx, colIdx);
     }
     __syncthreads();
     if (!threadIdx.x) {
       cuda::atomic_ref<uint, cuda::thread_scope_device> tqh{*(tQH + task.syncIdx)};
-      // notify scheduler after all Task stores complete
+      // notify scheduler
       cuda::std::ignore = tqh.fetch_add(tasks, cuda::memory_order_release);
     }
   }
@@ -348,6 +360,43 @@ namespace flashmoe::processor
             if (topo == Topology::MIXED && task.isPeerRemote()) {
               notifyNext<PeerConnectivity::remote, threads>(workspace, task, tQ, tilesN1, flagColStride,
                 offset, pA.tQH);
+            }
+            else if constexpr (topo == Topology::NVLINK_ONLY) {
+              // ARCH12: inline fused GEMM1 tile 0 on this CTA while GEMM0 staging A is hot.
+              // Keep tilesN1-1 scheduler-parallel (not ARCH1 full serialize, not steal).
+              constexpr int bM1 = cute::get<0>(typename TileGEMM1::TileShape{});
+              constexpr int bN1 = cute::get<1>(typename TileGEMM1::TileShape{});
+              constexpr int Arch1 = TileGEMM1::TileArch::value;
+              const auto mCoord0 = offset / tilesN1;
+              const auto* aP1 = reinterpret_cast<const Element*>(task.cData[0]);
+              const auto* bP1 = expertDownWeights + expertWeightSize * task.localExpertIdx();
+              auto* __restrict__ cP1 = reinterpret_cast<Element*>(task.cData[1]);
+              const auto* __restrict__ biasP1 = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
+              fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
+                workspace, aP1, bP1, cP1, biasP1, task.M(), H, I, static_cast<int>(offset));
+              const auto tokenBatchStart0 = static_cast<uint>(mCoord0) * static_cast<uint>(bM1);
+              const auto* __restrict__ tokenIds0 = tokenIndices
+                + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart0);
+              const auto tileCoord0 = cute::make_coord(cute::_0{}, 0);
+              combine<bM1, bN1, Arch1, threads, combineMode, true>(S, H, workspace, tokenIds0, moeOutput,
+                static_cast<const Element*>(nullptr), task.tileSize(), tileCoord0);
+              if (!threadIdx.x) {
+                const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord0, 0);
+                const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
+                producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord0, 0) = producerBit;
+                constexpr uint subCount = threads - WARP_SIZE;
+                const auto flagIdx = 0u * flagColStride
+                  + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord0);
+                const auto slotIdx = flagIdx / subCount;
+                const auto sBIdx = (flagIdx % subCount) + (slotIdx / 32u) * subCount;
+                const auto bIdx = slotIdx % 32u;
+                cuda::atomic_ref<uint, cuda::thread_scope_device> senseWord{consumerCombineBitMap[sBIdx].storage};
+                senseWord.fetch_xor(1u << bIdx, cuda::memory_order_relaxed);
+              }
+              if (tilesN1 > 1) {
+                notifyNext<PeerConnectivity::p2p, threads>(workspace, task, tQ, tilesN1 - 1, flagColStride,
+                  offset + 1, pA.tQH);
+              }
             }
             else {
               notifyNext<PeerConnectivity::p2p, threads>(workspace, task, tQ, tilesN1, flagColStride,
