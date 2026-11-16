@@ -88,11 +88,10 @@ FLASHMOE_HD void clampToSlots(const unsigned* local, unsigned n, unsigned slots,
   }
 }
 
-// ARCH9: finish-critical GEMM1 first.
-// Spend the unified CTA budget on every ready global (GEMM1) queue before any
-// affinity GEMM0, including cold-expert GEMM1 that used to wait behind hot GEMM0.
-// Global queues are taken whole so a one-shot head is never split. Subscriber
-// queues may be taken partially. Full CTA fill is preserved (same total budget).
+// Spend hotBudget on hot queues and coldBudget on the rest.
+// Global queues are taken whole so a one-shot head is never split.
+// Subscriber queues may be taken partially. Global queues are preferred
+// inside a budget so a finished GEMM1 is not stuck behind more GEMM0.
 FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
                               unsigned hot0, unsigned hot1,
                               unsigned hotBudget, unsigned coldBudget,
@@ -100,47 +99,49 @@ FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
   for (unsigned i = 0; i < nq; ++i) {
     take[i] = 0;
   }
-  unsigned budget = hotBudget + coldBudget;
-
-  // Pass 1: all ready GEMM1 / global queues, any expert.
-  for (unsigned i = 0; i < nq; ++i) {
-    const LocalQueue& q = queues[i];
-    if (!q.globalQueue || q.tasks == 0 || budget == 0) {
-      continue;
-    }
-    take[i] = q.tasks;
-    budget = budget > q.tasks ? budget - q.tasks : 0;
-  }
-
-  // Pass 2: hot-expert local (GEMM0) into remaining slots.
-  for (unsigned i = 0; i < nq; ++i) {
-    const LocalQueue& q = queues[i];
-    if (q.globalQueue || q.tasks == 0 || take[i] != 0 ||
-        !isHotExpert(q.expert, hot0, hot1) || budget == 0) {
-      continue;
-    }
-    if (budget >= q.tasks) {
-      take[i] = q.tasks;
-      budget -= q.tasks;
-    } else {
-      take[i] = budget;
-      budget = 0;
+  for (unsigned pass = 0; pass < 2; ++pass) {
+    const bool wantGlobal = pass == 0;
+    for (unsigned i = 0; i < nq; ++i) {
+      const LocalQueue& q = queues[i];
+      if (q.tasks == 0 || q.globalQueue != wantGlobal || !isHotExpert(q.expert, hot0, hot1)) {
+        continue;
+      }
+      if (hotBudget == 0) {
+        continue;
+      }
+      if (q.globalQueue) {
+        take[i] = q.tasks;
+        hotBudget = hotBudget > q.tasks ? hotBudget - q.tasks : 0;
+      } else if (hotBudget >= q.tasks) {
+        take[i] = q.tasks;
+        hotBudget -= q.tasks;
+      } else {
+        take[i] = hotBudget;
+        hotBudget = 0;
+      }
     }
   }
-
-  // Pass 3: cold-expert local (GEMM0) only if CTAs remain.
-  for (unsigned i = 0; i < nq; ++i) {
-    const LocalQueue& q = queues[i];
-    if (q.globalQueue || q.tasks == 0 || take[i] != 0 ||
-        isHotExpert(q.expert, hot0, hot1) || budget == 0) {
-      continue;
-    }
-    if (budget >= q.tasks) {
-      take[i] = q.tasks;
-      budget -= q.tasks;
-    } else {
-      take[i] = budget;
-      budget = 0;
+  for (unsigned pass = 0; pass < 2; ++pass) {
+    const bool wantGlobal = pass == 0;
+    for (unsigned i = 0; i < nq; ++i) {
+      const LocalQueue& q = queues[i];
+      if (q.tasks == 0 || q.globalQueue != wantGlobal || take[i] != 0 ||
+          isHotExpert(q.expert, hot0, hot1)) {
+        continue;
+      }
+      if (coldBudget == 0) {
+        continue;
+      }
+      if (q.globalQueue) {
+        take[i] = q.tasks;
+        coldBudget = coldBudget > q.tasks ? coldBudget - q.tasks : 0;
+      } else if (coldBudget >= q.tasks) {
+        take[i] = q.tasks;
+        coldBudget -= q.tasks;
+      } else {
+        take[i] = coldBudget;
+        coldBudget = 0;
+      }
     }
   }
 }

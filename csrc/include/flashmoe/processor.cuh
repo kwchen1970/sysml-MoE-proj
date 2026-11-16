@@ -380,15 +380,21 @@ namespace flashmoe::processor
           const auto mCoord = task.tileIdx / tilesN1;
           const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
-            // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
-            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
-              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
+            // ARCH10: structural fused dataflow on ARCH6 smem-resident C.
+            // Prefetch routing ids into CTA shared BEFORE GEMM1 so TPS gmem latency
+            // overlaps the whole mainloop; densify barrier publishes C and ids together;
+            // combine RedAdds with SkipGmemLoad+IdsReady (no second id load / barrier).
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
+            __shared__ TPS fuseIds[bM];
+            for (int i = static_cast<int>(threadIdx.x); i < bM; i += threads) {
+              fuseIds[i] = tokenIds[i];
+            }
+            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
+              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
+            combine<bM, bN, Arch, threads, combineMode, true, true>(S, H, workspace, fuseIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
             if (!threadIdx.x) {
               const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
