@@ -794,9 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // NCU10: shared-A ElementC reg-gate frees gateCache; spend that smem on
-  // GEMM0 pS=2 (L1TEX pipeline depth) while keeping 2 blocks/SM. Two-pass
-  // stays HYB17 (pS=1 + gateCache). GEMM1 stays pS=1.
+  // SCHED19 on NCU10 tip: shared-A reg-gate + GEMM0 pS=2 (NCU10 compute).
+  // Dispatch = NCU10 defaults. Tile-issue: prefer GEMM0/local queues before
+  // GEMM1/global in assignQueues. Bar: NCU10.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
