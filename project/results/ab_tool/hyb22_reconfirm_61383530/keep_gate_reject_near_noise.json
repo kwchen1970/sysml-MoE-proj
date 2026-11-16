@@ -1,0 +1,107 @@
+{
+  "meta": {
+    "host": "nid001116",
+    "job": "61383530",
+    "date": "2026-11-15T20:00:12-08:00",
+    "rounds": "8",
+    "warmup": "2",
+    "runs": "16",
+    "timeout_s": "180",
+    "error_max": "0.25",
+    "cand_tag": "HYB22",
+    "base_tag": "HYB17",
+    "ab_root": "/pscratch/sd/r/rmf253/moe-exp/ab/main",
+    "bins": "HYB17=/pscratch/sd/r/rmf253/moe-exp/ab/testFlashMoE.hyb17",
+    "HYB22": "/pscratch/sd/r/rmf253/moe-exp/ab/testFlashMoE.hyb22",
+    "tag": "HYB22",
+    "path": "/pscratch/sd/r/rmf253/moe-exp/ab/testFlashMoE.hyb22",
+    "md5": "3d51ca8d4ee8ca21f7406409d0829dec"
+  },
+  "primary": {
+    "geo_ratio": 0.9566304396118903,
+    "geo_delta_pct": -4.3369560388109685,
+    "wins": 9,
+    "losses": 2,
+    "n_shapes": 11,
+    "anchor": {
+      "S": 4096,
+      "H": 2048,
+      "I": 1408,
+      "E": 16,
+      "k": 6,
+      "cand_ms": 3.923758,
+      "base_ms": 4.103157,
+      "cand_mean_ms": 4.03184775,
+      "base_mean_ms": 4.13177375,
+      "ratio": 0.9562778124258954,
+      "delta_pct": -4.372218757410462,
+      "cand_cv_pct": 7.554825096333549,
+      "base_cv_pct": 8.832843634737822,
+      "cand_error_max": 0.069726,
+      "base_error_max": 0.072694,
+      "n_cand": 8,
+      "n_base": 8
+    },
+    "cand": "HYB22",
+    "base": "HYB17"
+  },
+  "extras": [
+    {
+      "cand": "HYB22",
+      "base": "HYB22",
+      "geo_delta_pct": 0.0,
+      "wins": 0,
+      "losses": 0,
+      "anchor": {
+        "S": 4096,
+        "H": 2048,
+        "I": 1408,
+        "E": 16,
+        "k": 6,
+        "cand_ms": 3.923758,
+        "base_ms": 3.923758,
+        "cand_mean_ms": 4.03184775,
+        "base_mean_ms": 4.03184775,
+        "ratio": 1.0,
+        "delta_pct": 0.0,
+        "cand_cv_pct": 7.554825096333549,
+        "base_cv_pct": 7.554825096333549,
+        "cand_error_max": 0.069726,
+        "base_error_max": 0.069726,
+        "n_cand": 8,
+        "n_base": 8
+      }
+    }
+  ],
+  "decision": {
+    "keep": false,
+    "marginal": true,
+    "verdict": "MARGINAL",
+    "ok_correct": true,
+    "ok_fast": true,
+    "ok_anchor": true,
+    "ok_loo": true,
+    "ok_noise": false,
+    "near_noise": true,
+    "reasons": [
+      "geo |-4.337%| < mean cand CV 4.73% (near noise; raise ROUNDS or --min-geo-margin-pct)",
+      "MARGINAL: geo -4.337% faster than base but below margin 1.3656% / noise floor"
+    ],
+    "error_violations": 0,
+    "fail_lines": 0,
+    "mean_cand_cv_pct": 4.728789867565635,
+    "bootstrap_identity": {
+      "tag": "HYB22",
+      "geo_delta_pct": 0.9104002847931225,
+      "abs_geo_delta_pct": 0.9104002847931225,
+      "n_shapes": 11,
+      "recommended_min_geo_margin_pct": 1.3656004271896838
+    },
+    "min_geo_margin_pct": 1.3656004271896838,
+    "agg": "median"
+  },
+  "tags": [
+    "HYB17",
+    "HYB22"
+  ]
+}

@@ -1,0 +1,8 @@
+VERDICT MARGINAL
+primary HYB22 vs HYB17: geo -4.337% (per-shape Δ median -2.090%, agg=median) (9W/2L/0T over 11 shapes)
+geo leave-one-out range: [-5.256%, -3.510%]
+anchor: 3.9238 vs 4.1032 ms (-4.372%)
+measurement: mean cand CV 4.73% across shapes
+bootstrap identity (HYB22 odd/even): geo +0.910% over 11 shapes; recommend --min-geo-margin-pct 1.37
+extra HYB22 vs HYB22: geo +0.000%
+reasons: geo |-4.337%| < mean cand CV 4.73% (near noise; raise ROUNDS or --min-geo-margin-pct); MARGINAL: geo -4.337% faster than base but below margin 1.3656% / noise floor

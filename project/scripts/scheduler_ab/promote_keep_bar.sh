@@ -1,8 +1,11 @@
 #!/bin/bash
-# Promote KEEP_BASE after confirm job succeeds.
+# Promote KEEP_BASE after confirm job succeeds with a clean KEEP.
 #
-#   ./promote_keep_bar.sh              # check KEEP_BASE_CONFIRM_JOB from keep_bar.env
-#   ./promote_keep_bar.sh 61380698     # explicit job id
+#   ./promote_keep_bar.sh              # check KEEP_CANDIDATE_*_JOB from keep_bar.env
+#   ./promote_keep_bar.sh 61383530     # explicit job id
+#
+# Refuses MARGINAL / NO_KEEP / near-noise (geo < mean CV or odd/even identity).
+# Bar stays HYB17 until a clean confirm clears margin with low CV.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -13,6 +16,11 @@ CAND=${KEEP_CANDIDATE:-HYB22}
 PREV=${KEEP_BASE:-HYB17}
 JOB=${1:-${KEEP_CANDIDATE_RECONFIRM_JOB:-${KEEP_CANDIDATE_CONFIRM_JOB:?}}}
 MARGIN=${PROMOTE_MIN_GEO_MARGIN_PCT:-1.0}
+
+iso_now() {
+  # GNU date -Is; macOS date lacks -I — fall back to UTC ISO-ish.
+  date -Is 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
 
 state=$(ssh -o BatchMode=yes "$HOST" \
   "sacct -j $JOB --format=State -n -P 2>/dev/null | head -1 | tr -d ' '" || true)
@@ -28,7 +36,7 @@ case "${state}" in
     ;;
 esac
 
-# Fetch confirm out and require solid KEEP (not MARGINAL) vs current tip.
+# Fetch confirm out and require solid KEEP (not MARGINAL/near-noise) vs current tip.
 OUT_DIR=$(mktemp -d /tmp/promote-keep.XXXXXX)
 remote=$(ssh -o BatchMode=yes "$HOST" \
   "ls /pscratch/sd/r/rmf253/moe-exp/ab/main/jobs/*${JOB}*.out \
@@ -42,10 +50,11 @@ PYTHON=${AB_TOOL_PYTHON:-python3}
 GATE="${SCRIPT_DIR}/../../analysis/ab_tool/parse_keep_gate.py"
 "$PYTHON" "$GATE" "$OUT_DIR/confirm.out" \
   --cand "$CAND" --base "$PREV" --agg median --min-geo-margin-pct "$MARGIN" \
+  --reject-near-noise --require-loo-margin --auto-margin \
   --out "$OUT_DIR/gate" | tee "$OUT_DIR/gate.log"
 verdict=$(awk '/^VERDICT /{print $2; exit}' "$OUT_DIR/gate/keep_gate.txt")
 if [[ "$verdict" != "KEEP" ]]; then
-  echo "confirm verdict=$verdict for $CAND vs $PREV — not promoting (need KEEP, not MARGINAL/NO_KEEP)"
+  echo "confirm verdict=$verdict for $CAND vs $PREV — not promoting (need KEEP, not MARGINAL/NO_KEEP/near-noise)"
   cat "$OUT_DIR/gate/keep_gate.txt"
   exit 4
 fi
@@ -53,7 +62,7 @@ fi
 # Promote candidate → KEEP_BASE.
 tmp=$(mktemp)
 cat > "$tmp" <<EOF
-# Promoted by promote_keep_bar.sh from job $JOB on $(date -Is)
+# Promoted by promote_keep_bar.sh from job $JOB on $(iso_now)
 KEEP_BASE=$CAND
 KEEP_BASE_STATUS=confirmed
 KEEP_BASE_CONFIRMED=1

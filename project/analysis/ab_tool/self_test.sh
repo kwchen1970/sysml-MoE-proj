@@ -47,4 +47,18 @@ if [[ -f "$CONFIRM_OUT" ]]; then
   grep -E 'geo -0\.0' "${OUT}/hyb22_confirm/keep_gate.txt"
 fi
 
+# --- 8-round reconfirm: raw KEEP but |geo|<CV → MARGINAL under --reject-near-noise ---
+RECONFIRM_OUT=${RECONFIRM_OUT:-"${ROOT}/project/results/ab_tool/hyb22-reconfirm-61383530.out"}
+if [[ -f "$RECONFIRM_OUT" ]]; then
+  "$PYTHON" "${SCRIPT_DIR}/parse_keep_gate.py" "$RECONFIRM_OUT" \
+    --cand HYB22 --base HYB17 --agg median --min-geo-margin-pct 1.0 \
+    --out "${OUT}/hyb22_reconfirm_raw" | tee "${OUT}/hyb22_reconfirm_raw.log"
+  grep -q '^VERDICT KEEP' "${OUT}/hyb22_reconfirm_raw/keep_gate.txt"
+  "$PYTHON" "${SCRIPT_DIR}/parse_keep_gate.py" "$RECONFIRM_OUT" \
+    --cand HYB22 --base HYB17 --agg median --min-geo-margin-pct 1.0 \
+    --reject-near-noise --require-loo-margin --auto-margin \
+    --out "${OUT}/hyb22_reconfirm_strict" | tee "${OUT}/hyb22_reconfirm_strict.log"
+  grep -q '^VERDICT MARGINAL' "${OUT}/hyb22_reconfirm_strict/keep_gate.txt"
+fi
+
 echo "SELF_TEST_OK"

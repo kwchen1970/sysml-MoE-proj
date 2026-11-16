@@ -12,11 +12,14 @@ Lane-safe measurement loop for keep / no-keep decisions.
 | `--min-geo-margin-pct` | **1.0** | clears ~±1% odd/even identity floor |
 | `--base` | **`HYB17`** | effective keep tip (`KEEP_BASE_CONFIRMED=1`) |
 | `--agg` | **`median`** | matches main-lane keep CSVs |
-| HYB22 | **MARGINAL** | confirm 61382160 −0.037%; do not promote; reconfirm 61383530 |
+| HYB22 | **MARGINAL** | three-job noise-fragile; **do not promote** (see below) |
+| promote | `--reject-near-noise --require-loo-margin --auto-margin` | refuses KEEP when \|geo\| < mean CV |
 
 `KEEP` requires correct errors, full shape coverage, and geo(cand/base) ≤ −margin% (per-shape **median**). Faster-but-below-margin → **MARGINAL**. See `keep_bar.env`.
 
-**Multi-tag warning:** packing many variants in one interleaved job (e.g. HYB17–23 in 61378825) can invent large geo wins that vanish on a clean 2-way confirm. Prefer 2–3 tags.
+**HYB22 three-job story:** multi-tag 61378825 −3.7%; clean confirm 61382160 −0.037% MARGINAL; 8-round reconfirm 61383530 raw KEEP −4.337% but \|geo\| < CV 4.73% → promote refuses (MARGINAL). Bar stays **HYB17**.
+
+**Multi-tag warning:** packing many variants in one interleaved job can invent large geo wins that vanish on a clean 2-way confirm. Prefer 2–3 tags.
 
 ## Paths
 
@@ -50,9 +53,10 @@ Or one-shot: `"$SCRIPTS/submit_ab.sh" --lane main --cand CAND ...` (still needs 
 project/scripts/scheduler_ab/fetch_job.sh <jobid> \
   --cand CAND --base HYB17 --agg median \
   --media-dir /path/to/Project/media/${LANE}_cand_vs_hyb17
-# Promote HYB22 only after a clean KEEP (not MARGINAL):
-#   ./promote_keep_bar.sh 61383530
+# Promote only after a clean KEEP that also clears --reject-near-noise:
+#   ./promote_keep_bar.sh <confirm_jobid>   # currently refuses HYB22
 ```
+
 
 ## Tool-lane quick keep A/B
 

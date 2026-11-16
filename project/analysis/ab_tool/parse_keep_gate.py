@@ -279,6 +279,7 @@ def keep_decision(
     min_geo_margin_pct: float,
     require_anchor_win: bool,
     require_loo_margin: bool = False,
+    reject_near_noise: bool = False,
 ) -> dict[str, Any]:
     cand_rows = [r for r in rows if r["tag"] == cand and not r.get("smoke")]
     err_viol = [r for r in cand_rows if r["error_pct"] > error_max]
@@ -313,26 +314,32 @@ def keep_decision(
             ok_anchor = False
             reasons.append(f"anchor {cmp['anchor']['delta_pct']:+.3f}% not a win")
 
-    # Measurement-quality hint from cand CVs (not a hard gate unless margin set).
+    # Measurement-quality: warn by default; hard-fail KEEP when --reject-near-noise.
     cand_cvs = [p["cand_cv_pct"] for p in cmp["per_shape"] if p["n_cand"] > 1]
     mean_cv = statistics.mean(cand_cvs) if cand_cvs else float("nan")
     bootstrap = cmp.get("bootstrap_identity") or {}
     boot_abs = bootstrap.get("abs_geo_delta_pct")
+    near_noise = False
     if mean_cv == mean_cv and abs(cmp["geo_delta_pct"]) < mean_cv and ok_fast:
-        reasons.append(
-            f"WARNING geo |{cmp['geo_delta_pct']:.3f}%| < mean cand CV {mean_cv:.2f}% "
+        near_noise = True
+        msg = (
+            f"geo |{cmp['geo_delta_pct']:.3f}%| < mean cand CV {mean_cv:.2f}% "
             "(near noise; raise ROUNDS or --min-geo-margin-pct)"
         )
+        reasons.append(msg if reject_near_noise else "WARNING " + msg)
     if (
         boot_abs == boot_abs
         and boot_abs is not None
         and abs(cmp["geo_delta_pct"]) < boot_abs
         and ok_fast
     ):
-        reasons.append(
-            f"WARNING geo |{cmp['geo_delta_pct']:.3f}%| < odd/even identity "
+        near_noise = True
+        msg = (
+            f"geo |{cmp['geo_delta_pct']:.3f}%| < odd/even identity "
             f"|{boot_abs:.3f}%| on {cand}"
         )
+        reasons.append(msg if reject_near_noise else "WARNING " + msg)
+    ok_noise = not (reject_near_noise and near_noise)
     loo_hi = cmp.get("geo_loo_hi_pct")
     ok_loo = True
     if (
@@ -351,7 +358,7 @@ def keep_decision(
         else:
             reasons.append("WARNING " + msg)
 
-    keep = bool(ok_correct and ok_fast and ok_anchor and ok_loo)
+    keep = bool(ok_correct and ok_fast and ok_anchor and ok_loo and ok_noise)
     # MARGINAL: correct and nominally faster (geo<1) but fails margin / LOO / noise.
     marginal = bool(
         (not keep)
@@ -379,6 +386,8 @@ def keep_decision(
         "ok_fast": ok_fast,
         "ok_anchor": ok_anchor,
         "ok_loo": ok_loo,
+        "ok_noise": ok_noise,
+        "near_noise": near_noise,
         "reasons": reasons,
         "error_violations": len(err_viol),
         "fail_lines": len(fails),
@@ -575,6 +584,12 @@ def main() -> int:
         help="FAIL keep if leave-one-out geo hi does not clear -margin (shape-fragile)",
     )
     p.add_argument(
+        "--reject-near-noise",
+        action="store_true",
+        help="Demote KEEP→MARGINAL when |geo| < mean cand CV or odd/even identity "
+        "(required for promote_keep_bar.sh)",
+    )
+    p.add_argument(
         "--require-anchor-win",
         action="store_true",
         help="Also require anchor shape delta < 0",
@@ -650,6 +665,7 @@ def main() -> int:
             min_geo_margin_pct=margin,
             require_anchor_win=args.require_anchor_win,
             require_loo_margin=args.require_loo_margin,
+            reject_near_noise=args.reject_near_noise,
         )
         decision["min_geo_margin_pct"] = margin
         decision["agg"] = args.agg
