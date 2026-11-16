@@ -223,6 +223,9 @@ set_target_properties(testFlashMoE PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON
         CUDA_RESOLVE_DEVICE_SYMBOLS ON
 )
+# 34=HYB22 recipe (reg-gate + drop sync) with mid-I shared-A floor in flashmoe.cu.
+set(FLASHMOE_HYB_VARIANT "34" CACHE STRING "FlashMoE HYB experiment variant")
+target_compile_definitions(testFlashMoE PRIVATE FLASHMOE_HYB_VARIANT=${FLASHMOE_HYB_VARIANT})
 flash_target_lto(testFlashMoE)
 
 # WAR for build failure
