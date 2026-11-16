@@ -102,9 +102,13 @@ namespace flashmoe::processor
       auto accUp = BLAS::suggest_accumulator();
       tileMainloop.gated(workspace, a, b, bV, accGate, accUp, M, N, K, tileCoord);
       __syncthreads();
+      // HYB37: load both biases up front; hold biasV in v_frag across silu/sGate.
       const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
+      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
       auto d_frag = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
+      auto v_frag = cublasdx::make_fragment_like<ElementC>(accUp.get_results());
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accGate);
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, v_frag, accUp);
       const auto c_frag = accGate.get_results();
       constexpr int accum_size = cublasdx::size(c_frag);
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
@@ -114,10 +118,8 @@ namespace flashmoe::processor
       auto sGate = cublasdx::make_tensor(reinterpret_cast<ElementC*>(gateCache), BLAS::suggest_layout_smem_c());
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sGate, accGate);
       auto cv_frag = accUp.get_results();
-      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
-      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accUp);
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
-        cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
+        cv_frag(i) = cv_frag(i) + loadConv(v_frag(i));
       });
       __syncthreads();
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(sGate, d_frag, accUp);
