@@ -369,9 +369,15 @@ void kickstart(const Options& opts) {
 
   const auto roundEC = cute::ceil_div(opts.EC, bM) * bM;
   using TileG0Host = flashmoe::tile::CollectiveMainloop<bM, bN0, bK0, Arch, Element, AccumType, threads, pSK0>;
+#if defined(FLASHMOE_HYB_VARIANT) && FLASHMOE_HYB_VARIANT == 18
+  constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
+    ? TileG0Host::SharedSizeABGated1::value
+    : TileG0Host::SharedSizeAB::value;
+#else
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
+#endif
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
     + (mt == flashmoe::MLPMatmulType::gated ? sizeof(Element) * bM * bN0 : 0),
     flashmoe::MAX_ALIGNMENT);
@@ -792,8 +798,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated HYB17 + NCU3: epoch-wake doorbell (non-owner warps do not
-  // park on syncthreads during wait). NCU1/NCU2 reverted (slower than HYB17).
+  // Ampere gated HYB22 keep + NCU4 epoch-wake: shared-A (bN0=64, I<4096 && k<=2) and two-pass
+  // both use direct rmem->gmem C store; shared-A keeps gateCache for silu.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;

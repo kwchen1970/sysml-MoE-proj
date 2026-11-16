@@ -393,6 +393,11 @@ namespace flashmoe::tile
       (cublasdx::cosize(BLAS::suggest_layout_smem_a())
         + 2 * cublasdx::cosize(BLAS::suggest_layout_smem_b()))
       * pipeStages * sizeof(Element), GeneralAlignment::value)>;
+    // Sequential-B shared-A (HYB18): one B panel reused for gate then up → half B smem.
+    using SharedSizeABGated1 = cute::Int<cutlass::round_up(
+      (cublasdx::cosize(BLAS::suggest_layout_smem_a())
+        + cublasdx::cosize(BLAS::suggest_layout_smem_b()))
+      * pipeStages * sizeof(Element), GeneralAlignment::value)>;
     using SharedSizeC = cute::Int<cutlass::round_up(bM * bN * sizeof(Element), GeneralAlignment::value)>;
     using CArr = cute::C<cr>;
     using AAlign = cute::Int<aAlignment>;
@@ -513,6 +518,46 @@ namespace flashmoe::tile
         BLAS().execute(sA, sBg, accGate, transformOp, transformOp);
         BLAS().execute(sA, sBu, accUp, transformOp, transformOp);
       });
+    }
+
+    // Sequential-B shared-A (Ampere gated pS=1): reuse one B smem panel for gate then up.
+    template <typename Accumulator, typename TileCoord>
+      requires(cute::rank_v<TileCoord> == 3 && cublasdx::is_blas_execution_v<BLAS> && pipeStages == 1)
+    __device__ __forceinline__
+    void gatedSeqB(void* __restrict__ const& workspace,
+                   const Element* __restrict__ const& a,
+                   const Element* __restrict__ const& bGate,
+                   const Element* __restrict__ const& bUp,
+                   Accumulator& accGate,
+                   Accumulator& accUp,
+                   const int& M, const int& N, const int& K, const TileCoord& tileCoord) const {
+      using TransformType = cuda::std::conditional_t<cuda::std::is_same_v<TranslatedElement, Element>,
+                                                     cublasdx::identity, Converter<TranslatedElement, Element>>;
+      constexpr TransformType transformOp{};
+      accGate.clear();
+      accUp.clear();
+      const int tilesK = K / bK;
+      const auto gA = tile::get<bM, bK, ar>(a, M, K, cute::select<0, 2>(tileCoord));
+      const auto gBg = tile::get<bK, bN, br>(bGate, K, N, cute::select<2, 1>(tileCoord));
+      const auto gBu = tile::get<bK, bN, br>(bUp, K, N, cute::select<2, 1>(tileCoord));
+      constexpr auto sASS = cublasdx::cosize(BLAS::suggest_layout_smem_a());
+      auto* __restrict__ sAP = static_cast<Element*>(workspace);
+      auto* __restrict__ sBP = sAP + sASS;
+      auto sA = cublasdx::make_tensor(sAP, BLAS::suggest_layout_smem_a());
+      auto sB = cublasdx::make_tensor(sBP, BLAS::suggest_layout_smem_b());
+      for (int kStage = 0; kStage < tilesK; ++kStage) {
+        cublasdx::copy<BLAS, aAlignment>(gA(cute::_, cute::_, kStage), sA);
+        cublasdx::copy<BLAS, bAlignment>(gBg(cute::_, cute::_, kStage), sB);
+        cpFence();
+        cpWait<0>();
+        BLAS().execute(sA, sB, accGate, transformOp, transformOp);
+        __syncthreads();
+        cublasdx::copy<BLAS, bAlignment>(gBu(cute::_, cute::_, kStage), sB);
+        cpFence();
+        cpWait<0>();
+        BLAS().execute(sA, sB, accUp, transformOp, transformOp);
+        __syncthreads();
+      }
     }
   };
 }
