@@ -52,8 +52,12 @@ namespace flashmoe
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
+    // HYB56: LDCS (streaming) for TPS tokenIndices — distinct from HYB55 __ldg,
+    // Prefer*, L2-prefetch, partial-stids, and NCU27 unroll+vectorize.
+    static_assert(sizeof(TPS) == sizeof(unsigned long long) && alignof(TPS) == alignof(unsigned long long));
     for (int i = threadIdx.x; i < bM; i += threads) {
-      stIds[i] = tokenIndices[i];
+      *reinterpret_cast<unsigned long long*>(stIds + i) =
+        __ldcs(reinterpret_cast<const unsigned long long*>(tokenIndices + i));
     }
     if constexpr (!SkipGmemLoad) {
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
