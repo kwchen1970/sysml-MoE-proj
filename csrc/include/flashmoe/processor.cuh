@@ -101,9 +101,13 @@ namespace flashmoe::processor
       auto accGate = BLAS::suggest_accumulator();
       auto accUp = BLAS::suggest_accumulator();
       tileMainloop.gated(workspace, a, b, bV, accGate, accUp, M, N, K, tileCoord);
+      // HYB45 on NCU12: dual bias load up front on reg-gate path.
       const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
+      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
       auto d_frag = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
+      auto v_frag = cublasdx::make_fragment_like<ElementC>(accUp.get_results());
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accGate);
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, v_frag, accUp);
       const auto c_frag = accGate.get_results();
       constexpr int accum_size = cublasdx::size(c_frag);
       auto gate_act = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
@@ -112,10 +116,8 @@ namespace flashmoe::processor
         gate_act(i) = storeConv(swishAlpha * act(g));
       });
       auto cv_frag = accUp.get_results();
-      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
-      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accUp);
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
-        cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
+        cv_frag(i) = cv_frag(i) + loadConv(v_frag(i));
       });
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
         d_frag(i) = storeConv(cv_frag(i) * loadConv(gate_act(i)));
