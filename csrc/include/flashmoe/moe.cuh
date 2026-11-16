@@ -87,8 +87,9 @@ namespace flashmoe::moe
       ? sizeof(Element) * bM * bN0 : 0;
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
       + gateCacheBytes, MAX_ALIGNMENT);
-    constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
-      sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
+    // NCU24: fused GEMM1→combine needs AB + C slabs (no overlay) so C store can skip a CTA sync.
+    constexpr auto GEMM1Sz = cutlass::round_up(
+      sizeof(Element) * bK1 * pSK1 * (bM + bN1) + sizeof(Element) * bM * bN1, MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
     const auto OSSz = os::getSharedSize<threads, bM>(world, numLocalExperts, E, EC, tilesN1);
     const auto taskSz = sizeof(Task) * tilesN1;
