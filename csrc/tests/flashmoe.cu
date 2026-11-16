@@ -792,7 +792,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // NCU8: NCU7 bias-reg prefetch + drop post-gated sync on shared-A.
+  // NCU9: HYB17 epilogue + L2 prefetch of next K-slice in tile mainloop
+  // (attack L1TEX long_scoreboard; no smem/occupancy change).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
