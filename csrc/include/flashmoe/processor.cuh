@@ -355,6 +355,22 @@ namespace flashmoe::processor
           }
           __syncthreads();
           if (enqueue) {
+            // HYB53: L2-prefetch this expert's Down weights while enqueuing GEMM1
+            // (handoff prefetch — not PreferShared/PreferL1/pS2/bK128/moeOutput).
+            {
+              const auto* __restrict__ downP =
+                expertDownWeights + expertWeightSize * task.localExpertIdx();
+              constexpr size_t kPrefetchBytes = 32 * 1024;
+              constexpr int lineElems = static_cast<int>(128 / sizeof(Element));
+              const size_t prefElems =
+                expertWeightSize < (kPrefetchBytes / sizeof(Element))
+                  ? expertWeightSize
+                  : (kPrefetchBytes / sizeof(Element));
+              for (size_t i = static_cast<size_t>(threadIdx.x) * lineElems; i < prefElems;
+                   i += static_cast<size_t>(threads) * lineElems) {
+                asm volatile("prefetch.global.L2 [%0];" ::"l"(downP + i) : "memory");
+              }
+            }
             const auto offset = tilesN1 * (task.tileIdx / tilesN0);
             auto* __restrict__ tQ = pA.ptQ + (task.syncIdx * tilesN1);
             if (topo == Topology::MIXED && task.isPeerRemote()) {
