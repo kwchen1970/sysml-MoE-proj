@@ -149,8 +149,14 @@ namespace flashmoe::os
     auto* __restrict__ eCs = reinterpret_cast<int*>(scratch);
     if (!threadIdx.x) {
       // Expert computation expectant tasks
-      // actual amount unknown a priori, so we use upper bound and self-correct at runtime
-      *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + tilesN1);
+      // actual amount unknown a priori, so we use upper bound and self-correct at runtime.
+      // ARCH1 (NVLINK_ONLY): GEMM1 is fused into the GEMM0-closing CTA, so the
+      // scheduler only sees GEMM0 (+ combine below). MIXED keeps GEMM1 queued.
+      if constexpr (topo == Topology::NVLINK_ONLY) {
+        *taskBound = ctx.nLx * ctx.world * ecTilesM * tilesN0;
+      } else {
+        *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + tilesN1);
+      }
     }
     for (uint i = threadIdx.x; i < E; i += threads) {
       eCs[i] = expertCounts[i];

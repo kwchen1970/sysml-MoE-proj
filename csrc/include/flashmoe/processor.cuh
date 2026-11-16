@@ -343,14 +343,49 @@ namespace flashmoe::processor
           __syncthreads();
           if (enqueue) {
             const auto offset = tilesN1 * (task.tileIdx / tilesN0);
-            auto* __restrict__ tQ = pA.ptQ + (task.syncIdx * tilesN1);
-            if (topo == Topology::MIXED && task.isPeerRemote()) {
-              notifyNext<PeerConnectivity::remote, threads>(workspace, task, tQ, tilesN1, flagColStride,
-                offset, pA.tQH);
+            // ARCH1: on NVLINK_ONLY, fuse GEMM1 into the CTA that closed the GEMM0
+            // M-row. Skip scheduler notifyNext/doorbell for that row's GEMM1 wave
+            // (taskBound excludes tilesN1 in os::start). MIXED remote keeps queue path.
+            if constexpr (topo == Topology::NVLINK_ONLY) {
+              const auto* aP1 = reinterpret_cast<const Element*>(task.cData[0]);
+              const auto* bP1 = expertDownWeights + expertWeightSize * task.localExpertIdx();
+              auto* __restrict__ cP1 = reinterpret_cast<Element*>(task.cData[1]);
+              const auto* __restrict__ biasP1 = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
+              for (uint n = 0; n < tilesN1; ++n) {
+                const auto gemm1TileIdx = offset + n;
+                fGET<TileGEMM1, cublasdx::identity>(workspace, aP1, bP1, cP1, biasP1,
+                  task.M(), H, I, gemm1TileIdx);
+                __syncthreads();
+                if (!threadIdx.x) {
+                  const auto mCoord = gemm1TileIdx / tilesN1;
+                  const auto nCoord = gemm1TileIdx % tilesN1;
+                  const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
+                  const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
+                  const auto flagSignal = SignalPayload<PacketStage::last>{
+                    mCoord,
+                    task.tileSize(),
+                    producerBit,
+                    stateNumber,
+                  };
+                  const auto sigPayload = cuda::std::bit_cast<uint64_t>(flagSignal);
+                  producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
+                  cuda::atomic_ref<uint64_t, cuda::thread_scope_system> remoteFlags{
+                    *(task.flags + n * flagColStride)};
+                  remoteFlags.store(sigPayload, cuda::memory_order_release);
+                }
+                __syncthreads();
+              }
             }
             else {
-              notifyNext<PeerConnectivity::p2p, threads>(workspace, task, tQ, tilesN1, flagColStride,
-                offset, pA.tQH);
+              auto* __restrict__ tQ = pA.ptQ + (task.syncIdx * tilesN1);
+              if (task.isPeerRemote()) {
+                notifyNext<PeerConnectivity::remote, threads>(workspace, task, tQ, tilesN1, flagColStride,
+                  offset, pA.tQH);
+              }
+              else {
+                notifyNext<PeerConnectivity::p2p, threads>(workspace, task, tQ, tilesN1, flagColStride,
+                  offset, pA.tQH);
+              }
             }
           }
           __syncthreads();
