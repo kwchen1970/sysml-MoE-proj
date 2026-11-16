@@ -3,7 +3,8 @@
 
 KEEP only if:
   1. correctness: every successful row has error_pct <= error_max
-  2. speed: geo_mean(cand/base) beats --min-geo-margin-pct (default base=HYB22, agg=median)
+  2. speed: geo_mean(cand/base) beats --min-geo-margin-pct (default base=HYB17, agg=median);
+  MARGINAL if faster but below margin / noise
   3. coverage: every shape has means for both cand and base
 
 Also reports geo vs HYB2 / BK64 when those tags are present, plus anchor delta,
@@ -351,9 +352,29 @@ def keep_decision(
             reasons.append("WARNING " + msg)
 
     keep = bool(ok_correct and ok_fast and ok_anchor and ok_loo)
+    # MARGINAL: correct and nominally faster (geo<1) but fails margin / LOO / noise.
+    marginal = bool(
+        (not keep)
+        and ok_correct
+        and geo == geo
+        and geo < 1.0
+        and ok_anchor
+    )
+    if keep:
+        verdict = "KEEP"
+    elif marginal:
+        verdict = "MARGINAL"
+        if "MARGINAL" not in " ".join(reasons):
+            reasons.append(
+                f"MARGINAL: geo {cmp['geo_delta_pct']:+.3f}% faster than base but "
+                f"below margin {min_geo_margin_pct:g}% / noise floor"
+            )
+    else:
+        verdict = "NO_KEEP"
     return {
         "keep": keep,
-        "verdict": "KEEP" if keep else "NO_KEEP",
+        "marginal": marginal,
+        "verdict": verdict,
         "ok_correct": ok_correct,
         "ok_fast": ok_fast,
         "ok_anchor": ok_anchor,
@@ -520,20 +541,21 @@ def main() -> int:
     p.add_argument("--cand", required=True, help="Candidate tag (must beat --base)")
     p.add_argument(
         "--base",
-        default="HYB22",
-        help="Baseline tag to beat (default HYB22 provisional bar; was HYB17)",
+        default="HYB17",
+        help="Baseline tag to beat (default HYB17; HYB22 is MARGINAL until reconfirm)",
     )
     p.add_argument(
         "--also-vs",
         nargs="*",
-        default=["HYB17", "HYB2", "BK64"],
+        default=["HYB22", "HYB2", "BK64"],
         help="Extra baselines to report",
     )
     p.add_argument(
         "--agg",
         choices=("median", "mean"),
         default="median",
-        help="Per-shape latency aggregate before geo (default median; matches keep CSVs)",
+        help="Per-shape latency aggregate before geo (default median; matches keep CSVs). "
+        "Prefer 2–3 tags only — multi-tag interleaved A/Bs inflate CV and can invent keeps.",
     )
     p.add_argument("--error-max", type=float, default=0.25, help="Max allowed error_pct for cand")
     p.add_argument(

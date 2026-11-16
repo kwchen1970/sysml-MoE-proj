@@ -23,24 +23,28 @@ grep -q '^VERDICT NO_KEEP' "${OUT}/hyb14_vs_hyb17/keep_gate.txt"
 
 "$PYTHON" "${SCRIPT_DIR}/parse_keep_gate.py" "$HYB17_OUT" \
   --cand HYB17 --base HYB2 --agg median --min-geo-margin-pct 5 --out "${OUT}/strict" | tee "${OUT}/strict.log"
-grep -q '^VERDICT NO_KEEP' "${OUT}/strict/keep_gate.txt"
+# Faster than base but below a hard 5% margin → MARGINAL (not KEEP).
+grep -q '^VERDICT MARGINAL' "${OUT}/strict/keep_gate.txt"
 
 "$PYTHON" "${SCRIPT_DIR}/parse_keep_gate.py" "$HYB17_OUT" \
   --cand HYB17 --base BK64 --agg median --auto-margin --out "${OUT}/vs_bk64" | tee "${OUT}/vs_bk64.log"
 grep -q '^VERDICT KEEP' "${OUT}/vs_bk64/keep_gate.txt"
 
-# --- HYB22 provisional bar fixture (median geo ≈ −3.7% vs HYB17) ---
+# --- HYB22 multi-tag fixture still looks like KEEP (noise-fragile) ---
 if [[ -f "$HYB22_OUT" ]]; then
   "$PYTHON" "${SCRIPT_DIR}/parse_keep_gate.py" "$HYB22_OUT" \
     --cand HYB22 --base HYB17 --agg median --out "${OUT}/hyb22_vs_hyb17" | tee "${OUT}/hyb22.log"
   grep -q '^VERDICT KEEP' "${OUT}/hyb22_vs_hyb17/keep_gate.txt"
   grep -E 'geo -3\.[0-9]+%' "${OUT}/hyb22_vs_hyb17/keep_gate.txt"
-  # Default --base is now HYB22: cand that does not beat it → NO_KEEP
-  "$PYTHON" "${SCRIPT_DIR}/parse_keep_gate.py" "$HYB22_OUT" \
-    --cand HYB17 --base HYB22 --agg median --out "${OUT}/hyb17_vs_hyb22" | tee "${OUT}/hyb17_vs_hyb22.log"
-  grep -q '^VERDICT NO_KEEP' "${OUT}/hyb17_vs_hyb22/keep_gate.txt"
-else
-  echo "WARN: missing HYB22 fixture $HYB22_OUT (skip)"
+fi
+
+# --- Clean 2-way confirm is MARGINAL (−0.037%) — do not promote ---
+CONFIRM_OUT=${CONFIRM_OUT:-"${ROOT}/project/results/ab_tool/hyb22-confirm-61382160.out"}
+if [[ -f "$CONFIRM_OUT" ]]; then
+  "$PYTHON" "${SCRIPT_DIR}/parse_keep_gate.py" "$CONFIRM_OUT" \
+    --cand HYB22 --base HYB17 --agg median --out "${OUT}/hyb22_confirm" | tee "${OUT}/hyb22_confirm.log"
+  grep -q '^VERDICT MARGINAL' "${OUT}/hyb22_confirm/keep_gate.txt"
+  grep -E 'geo -0\.0' "${OUT}/hyb22_confirm/keep_gate.txt"
 fi
 
 echo "SELF_TEST_OK"

@@ -1,21 +1,33 @@
 {
   "updated": "2026-11-15",
   "keep_bar": {
-    "base": "HYB22",
-    "status": "provisional",
+    "base": "HYB17",
+    "status": "confirmed",
+    "confirmed": 1,
+    "branch": "cursor/hyb14-direct-gmem-378d",
+    "sha": "436700d"
+  },
+  "marginal_candidate": {
+    "tag": "HYB22",
+    "status": "marginal",
+    "confirmed": 0,
     "branch": "cursor/main-hyb22-keep-378d",
     "sha": "6bef612",
     "provisional_job": "61378825",
-    "confirm_job": "61380698",
-    "geo_vs_hyb17_median_pct": -3.67,
-    "prev_base": "HYB17"
+    "provisional_geo_vs_hyb17_median_pct": -3.669,
+    "confirm_job": "61382160",
+    "confirm_geo_vs_hyb17_median_pct": -0.037,
+    "reconfirm_job": "61383530",
+    "verdict": "MARGINAL — do not promote"
   },
-  "basis": {
-    "noise_job": "61377792",
-    "rounds": 5,
-    "mean_cand_cv_pct": 2.96,
-    "odd_even_identity_geo_delta_pct": 0.939,
-    "pending_identity_job": "61380130"
+  "multi_tag_noise": {
+    "lesson": "Multi-tag interleaved A/Bs (7 variants in 61378825) inflated apparent HYB22 win to −3.7%; clean 2-way confirm collapsed to −0.037%.",
+    "rules": [
+      "Prefer 2–3 tags only (CAND + KEEP_BASE [+ one prior tip]).",
+      "Require confirm on durable binaries with ROUNDS≥5 (prefer 8) before promoting.",
+      "Treat |geo| ≲ 1% or geo within mean CV / odd-even identity as MARGINAL.",
+      "Use --agg median; still report mean CV and leave-one-out range."
+    ]
   },
   "defaults": {
     "ROUNDS": 8,
@@ -25,12 +37,6 @@
     "min_geo_margin_pct": 1.0,
     "agg": "median",
     "auto_margin_multiplier": 1.5,
-    "keep_base": "HYB22"
-  },
-  "notes": [
-    "KEEP requires geo(cand/HYB22) <= -min_geo_margin_pct with per-shape median latency, error in band.",
-    "Median agg matches main-lane keep CSVs; mean under-reports HYB22 (≈−2.0% vs −3.7%).",
-    "Promote with project/scripts/scheduler_ab/promote_keep_bar.sh after 61380698 COMPLETED.",
-    "Other lanes: source ab/tool/scripts/scheduler_ab/lane_env.sh <lane>."
-  ]
+    "keep_base": "HYB17"
+  }
 }

@@ -10,11 +10,13 @@ Lane-safe measurement loop for keep / no-keep decisions.
 | `RUNS` / `WARMUP` | 16 / 2 | same as prior keep jobs |
 | `ERROR_MAX` | 0.25% | correctness band |
 | `--min-geo-margin-pct` | **1.0** | clears ~±1% odd/even identity floor |
-| `--base` | **`HYB22`** | provisional keep tip (confirm job 61380698) |
-| `--agg` | **`median`** | matches main-lane keep CSVs; mean under-reports multi-tag A/Bs |
-| `--auto-margin` | off | raises margin to bootstrap×1.5 (~1.4% on hyb17-61377792) |
+| `--base` | **`HYB17`** | effective keep tip (`KEEP_BASE_CONFIRMED=1`) |
+| `--agg` | **`median`** | matches main-lane keep CSVs |
+| HYB22 | **MARGINAL** | confirm 61382160 −0.037%; do not promote; reconfirm 61383530 |
 
-`KEEP` requires correct errors, full shape coverage, and geo(cand/base) ≤ −margin% (per-shape **median** latency by default). See `keep_bar.env`.
+`KEEP` requires correct errors, full shape coverage, and geo(cand/base) ≤ −margin% (per-shape **median**). Faster-but-below-margin → **MARGINAL**. See `keep_bar.env`.
+
+**Multi-tag warning:** packing many variants in one interleaved job (e.g. HYB17–23 in 61378825) can invent large geo wins that vanish on a clean 2-way confirm. Prefer 2–3 tags.
 
 ## Paths
 
@@ -36,10 +38,8 @@ source "$SCRIPTS/lane_env.sh" main          # or: ncu | epi | sched | tool
 # After you build a candidate:
 cp /path/to/cmake-build-release/testFlashMoE "$AB_BINS/testFlashMoE.cand"
 
-BINS="BK64=$AB_BINS/testFlashMoE.bk64 HYB2=$AB_BINS/testFlashMoE.hyb2 \
-HYB17=$AB_BINS/testFlashMoE.hyb17 HYB22=$AB_BINS/testFlashMoE.hyb22 \
-CAND=$AB_BINS/testFlashMoE.cand" \
-  "$SCRIPTS/submit_ab.sh" --root "$AB_ROOT" --name "${LANE}-cand1" --cand CAND --base HYB22
+BINS="HYB17=$AB_BINS/testFlashMoE.hyb17 CAND=$AB_BINS/testFlashMoE.cand" \
+  "$SCRIPTS/submit_ab.sh" --root "$AB_ROOT" --name "${LANE}-cand1" --cand CAND --base HYB17
 ```
 
 Or one-shot: `"$SCRIPTS/submit_ab.sh" --lane main --cand CAND ...` (still needs `BINS`).
@@ -47,22 +47,19 @@ Or one-shot: `"$SCRIPTS/submit_ab.sh" --lane main --cand CAND ...` (still needs 
 ### Fetch + gate after the job
 
 ```bash
-# From a laptop with the repo worktree / clone:
 project/scripts/scheduler_ab/fetch_job.sh <jobid> \
-  --cand CAND --base HYB22 --agg median \
-  --media-dir /path/to/Project/media/${LANE}_cand_vs_hyb22
-# Add --auto-margin for the stricter bootstrap margin.
-# After confirm: ./promote_keep_bar.sh 61380698
+  --cand CAND --base HYB17 --agg median \
+  --media-dir /path/to/Project/media/${LANE}_cand_vs_hyb17
+# Promote HYB22 only after a clean KEEP (not MARGINAL):
+#   ./promote_keep_bar.sh 61383530
 ```
 
 ## Tool-lane quick keep A/B
 
 ```bash
 source ./lane_env.sh tool
-export BINS="BK64=$AB_BINS/testFlashMoE.bk64 HYB2=$AB_BINS/testFlashMoE.hyb2 \
-HYB17=$AB_BINS/testFlashMoE.hyb17 HYB22=$AB_BINS/testFlashMoE.hyb22 \
-CAND=$AB_BINS/testFlashMoE.cand"
-./submit_ab.sh --cand CAND --name tool-cand1 --base HYB22
+export BINS="HYB17=$AB_BINS/testFlashMoE.hyb17 CAND=$AB_BINS/testFlashMoE.cand"
+./submit_ab.sh --cand CAND --name tool-cand1 --base HYB17
 ```
 
 Harness extras vs the old flat `ab_bench.sbatch`:

@@ -51,6 +51,7 @@ done
 
 # shellcheck disable=SC1091
 source "${AB_SCRIPTS}/keep_bar.env" 2>/dev/null || true
-echo "lane_env: LANE=$LANE AB_ROOT=$AB_ROOT keep_base=${KEEP_BASE:-HYB22} (${KEEP_BASE_STATUS:-unknown})"
-echo "  baselines: $AB_BINS/testFlashMoE.{hyb22,hyb17,hyb2,hyb14,bk64}"
-echo "  submit: BINS=... $AB_SCRIPTS/submit_ab.sh --root \$AB_ROOT --name ${LANE}-cand1 --cand CAND --base ${KEEP_BASE:-HYB22}"
+echo "lane_env: LANE=$LANE AB_ROOT=$AB_ROOT keep_base=${KEEP_BASE:-HYB17} (${KEEP_BASE_STATUS:-unknown})"
+echo "  candidate=${KEEP_CANDIDATE:-none} (${KEEP_CANDIDATE_STATUS:-n/a})"
+echo "  baselines: $AB_BINS/testFlashMoE.{hyb17,hyb22,hyb2,hyb14,bk64}"
+echo "  submit: BINS=... $AB_SCRIPTS/submit_ab.sh --root \$AB_ROOT --name ${LANE}-cand1 --cand CAND --base ${KEEP_BASE:-HYB17}"

@@ -1,0 +1,76 @@
+{
+  "meta": {
+    "host": "nid002285",
+    "job": "61382160",
+    "date": "2026-11-15T19:49:48-08:00",
+    "rounds": "5",
+    "warmup": "2",
+    "runs": "16",
+    "timeout_s": "180",
+    "error_max": "0.25",
+    "cand_tag": "HYB22",
+    "base_tag": "HYB17",
+    "ab_root": "/pscratch/sd/r/rmf253/moe-exp/ab/main",
+    "bins": "HYB17=/pscratch/sd/r/rmf253/moe-exp/ab/testFlashMoE.hyb17",
+    "HYB22": "/pscratch/sd/r/rmf253/moe-exp/ab/testFlashMoE.hyb22",
+    "tag": "HYB22",
+    "path": "/pscratch/sd/r/rmf253/moe-exp/ab/testFlashMoE.hyb22",
+    "md5": "3d51ca8d4ee8ca21f7406409d0829dec"
+  },
+  "primary": {
+    "geo_ratio": 0.9996272267708539,
+    "geo_delta_pct": -0.03727732291460839,
+    "wins": 6,
+    "losses": 5,
+    "n_shapes": 11,
+    "anchor": {
+      "S": 4096,
+      "H": 2048,
+      "I": 1408,
+      "E": 16,
+      "k": 6,
+      "cand_ms": 3.776436,
+      "base_ms": 3.831416,
+      "cand_mean_ms": 3.8252952000000002,
+      "base_mean_ms": 3.9051172,
+      "ratio": 0.9856502139156907,
+      "delta_pct": -1.4349786084309257,
+      "cand_cv_pct": 2.8486481128402983,
+      "base_cv_pct": 4.507764607605983,
+      "cand_error_max": 0.06876,
+      "base_error_max": 0.066626,
+      "n_cand": 5,
+      "n_base": 5
+    },
+    "cand": "HYB22",
+    "base": "HYB17"
+  },
+  "extras": [],
+  "decision": {
+    "keep": false,
+    "verdict": "NO_KEEP",
+    "ok_correct": true,
+    "ok_fast": false,
+    "ok_anchor": true,
+    "ok_loo": true,
+    "reasons": [
+      "geo -0.037% not faster than margin 1%"
+    ],
+    "error_violations": 0,
+    "fail_lines": 0,
+    "mean_cand_cv_pct": 5.568211501538285,
+    "bootstrap_identity": {
+      "tag": "HYB22",
+      "geo_delta_pct": -1.138757853499217,
+      "abs_geo_delta_pct": 1.138757853499217,
+      "n_shapes": 11,
+      "recommended_min_geo_margin_pct": 1.7081367802488256
+    },
+    "min_geo_margin_pct": 1.0,
+    "agg": "median"
+  },
+  "tags": [
+    "HYB17",
+    "HYB22"
+  ]
+}
