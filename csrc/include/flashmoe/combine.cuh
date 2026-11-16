@@ -25,6 +25,8 @@ namespace flashmoe
 
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
+  // ARCH8: on SkipGmemLoad, apply routing scale in dense smem first, then RedAdd/store
+  // without per-element float converts on the atomic path (same-CTA, explicit syncs — no races).
   template <
     int bM,
     int bN,
@@ -63,6 +65,19 @@ namespace flashmoe
       cublasdx::copy_wait();
     }
     __syncthreads();
+    // ARCH8: scale dense smem tile in-place (SkipGmemLoad only). Atom path stays Element→atomic.
+    if constexpr (SkipGmemLoad) {
+      using AccumType = cuda::std::common_type_t<float, Element>;
+      constexpr Converter<AccumType, Element> loadOp{};
+      constexpr Converter<Element, AccumType> storeOp{};
+      const int nElems = static_cast<int>(tileSize) * bN;
+      for (int i = threadIdx.x; i < nElems; i += threads) {
+        const auto rowIdx = i / bN;
+        const auto colIdx = i % bN;
+        sC(rowIdx, colIdx) = storeOp(loadOp(sC(rowIdx, colIdx)) * stIds[rowIdx].probability);
+      }
+      __syncthreads();
+    }
     if constexpr (c == CombineMode::single) {
       using VTD = VectorTypeDescriptor<typename RawType<Element>::type, ElementAlignment<Element, bN>>;
       using VT = VTD::VectorType;
@@ -152,6 +167,7 @@ namespace flashmoe
       const auto actualElems = tileSize * rbN;
       constexpr auto redElemsPerThread = totalElems / threads;
       constexpr int packWidth = RVD::VectorWidth::value;
+      // ARCH8 SkipGmemLoad: smem already scaled → RedAdd without float converts.
       if (tileSize == bM) {
         for (int i = 0; i < redElemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
@@ -161,13 +177,15 @@ namespace flashmoe
           auto tokenValue = vsC(rowIdx, colIdx);
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
-          if constexpr (RAD::Width::value == 2) {
+          if constexpr (SkipGmemLoad) {
+            static_assert(sizeof(RV) == sizeof(RVR));
+            scaledValue = cuda::std::bit_cast<RVR>(tokenValue);
+          }
+          else if constexpr (RAD::Width::value == 2) {
             constexpr Converter<float2, RAT> loadOp{};
             constexpr Converter<RAT, float2> storeOp{};
-            // fp16x2 or bf16x2
             const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
             for (int j = 0; j < packWidth; ++j) {
-              // convert to float2 -> multiply -> convert back
               scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
             }
           }
@@ -176,14 +194,9 @@ namespace flashmoe
             constexpr Converter<AccumType, RAT> loadOp{};
             constexpr Converter<RAT, AccumType> storeOp{};
             for (int j = 0; j < packWidth; ++j) {
-              // convert to float -> multiply -> convert back
               scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
             }
           }
-          // account for the fact that the type of the below tile is either Element or RAT.
-          // Since we read 'packWidth' per iteration we need to advance the colIx by that much.
-          // The row index is preserved because we only apply this vectorization within a row
-          // which is contiguous in memory.
           auto* __restrict__ tCp = (&tC(tokIdx, colIdx * packWidth));
           constexpr RedAddOp op{};
           op(tCp, scaledValue);
@@ -199,13 +212,15 @@ namespace flashmoe
             auto tokenValue = vsC(rowIdx, colIdx);
             RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
-            if constexpr (RAD::Width::value == 2) {
+            if constexpr (SkipGmemLoad) {
+              static_assert(sizeof(RV) == sizeof(RVR));
+              scaledValue = cuda::std::bit_cast<RVR>(tokenValue);
+            }
+            else if constexpr (RAD::Width::value == 2) {
               constexpr Converter<float2, RAT> loadOp{};
               constexpr Converter<RAT, float2> storeOp{};
-              // fp16x2 or bf16x2
               const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float2 -> multiply -> convert back
                 scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
               }
             }
@@ -214,7 +229,6 @@ namespace flashmoe
               constexpr Converter<AccumType, RAT> loadOp{};
               constexpr Converter<RAT, AccumType> storeOp{};
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float -> multiply -> convert back
                 scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
               }
             }
@@ -235,13 +249,15 @@ namespace flashmoe
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
           if (idx < actualElems) {
-            if constexpr (RAD::Width::value == 2) {
+            if constexpr (SkipGmemLoad) {
+              static_assert(sizeof(RV) == sizeof(RVR));
+              scaledValue = cuda::std::bit_cast<RVR>(tokenValue);
+            }
+            else if constexpr (RAD::Width::value == 2) {
               constexpr Converter<float2, RAT> loadOp{};
               constexpr Converter<RAT, float2> storeOp{};
-              // fp16x2 or bf16x2
               const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float2 -> multiply -> convert back
                 scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
               }
             }
@@ -250,7 +266,6 @@ namespace flashmoe
               constexpr Converter<AccumType, RAT> loadOp{};
               constexpr Converter<RAT, AccumType> storeOp{};
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float -> multiply -> convert back
                 scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
               }
             }
