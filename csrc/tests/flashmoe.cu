@@ -377,9 +377,8 @@ void kickstart(const Options& opts) {
     ? sizeof(Element) * bM * bN0 : 0;
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
     + gateCacheBytes, flashmoe::MAX_ALIGNMENT);
-  // NCU24: AB + C (matches moe::kernelSMEM fused slab)
-  constexpr auto GEMM1Sz = cutlass::round_up(
-    sizeof(Element) * bK1 * pSK1 * (bM + bN1) + sizeof(Element) * bM * bN1, flashmoe::MAX_ALIGNMENT);
+  constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
+    sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
 
   const auto kernelSz = flashmoe::moe::kernelSMEM<Config>(opts.E, opts.EC, world, numLocalExperts, tilesN1);
   int maxSharedMemory = 0;

@@ -23,8 +23,19 @@ namespace flashmoe
 #endif
   }
 
+  // NCU25: scale fp16x2 / bf16x2 in-register (skip float2 convert round-trip).
+  __device__ __forceinline__
+  __half2 packedLowpScale(const __half2& v, float p) {
+    return __hmul2(v, __float2half2_rn(float2{p, p}));
+  }
+  __device__ __forceinline__
+  __nv_bfloat162 packedLowpScale(const __nv_bfloat162& v, float p) {
+    return __hmul2(v, __float2bfloat162_rn(float2{p, p}));
+  }
+
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
+  // NCU25: SkipGmemLoad uses packedLowpScale for Width==2 atomic path.
   template <
     int bM,
     int bN,
@@ -163,13 +174,20 @@ namespace flashmoe
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
           if constexpr (RAD::Width::value == 2) {
-            constexpr Converter<float2, RAT> loadOp{};
-            constexpr Converter<RAT, float2> storeOp{};
-            // fp16x2 or bf16x2
-            const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
-            for (int j = 0; j < packWidth; ++j) {
-              // convert to float2 -> multiply -> convert back
-              scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+            if constexpr (SkipGmemLoad) {
+              // NCU25: fused path — packed lowp mul (no float2 round-trip)
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = packedLowpScale(static_cast<RAT>(tokenValue[j]),
+                                                 indexAndScale.probability);
+              }
+            }
+            else {
+              constexpr Converter<float2, RAT> loadOp{};
+              constexpr Converter<RAT, float2> storeOp{};
+              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+              }
             }
           }
           else {
@@ -201,13 +219,19 @@ namespace flashmoe
             RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
             if constexpr (RAD::Width::value == 2) {
-              constexpr Converter<float2, RAT> loadOp{};
-              constexpr Converter<RAT, float2> storeOp{};
-              // fp16x2 or bf16x2
-              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
-              for (int j = 0; j < packWidth; ++j) {
-                // convert to float2 -> multiply -> convert back
-                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+              if constexpr (SkipGmemLoad) {
+                for (int j = 0; j < packWidth; ++j) {
+                  scaledValue[j] = packedLowpScale(static_cast<RAT>(tokenValue[j]),
+                                                   indexAndScale.probability);
+                }
+              }
+              else {
+                constexpr Converter<float2, RAT> loadOp{};
+                constexpr Converter<RAT, float2> storeOp{};
+                const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+                for (int j = 0; j < packWidth; ++j) {
+                  scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+                }
               }
             }
             else {
@@ -237,13 +261,19 @@ namespace flashmoe
           const auto tokIdx = indexAndScale.tokenIdx;
           if (idx < actualElems) {
             if constexpr (RAD::Width::value == 2) {
-              constexpr Converter<float2, RAT> loadOp{};
-              constexpr Converter<RAT, float2> storeOp{};
-              // fp16x2 or bf16x2
-              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
-              for (int j = 0; j < packWidth; ++j) {
-                // convert to float2 -> multiply -> convert back
-                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+              if constexpr (SkipGmemLoad) {
+                for (int j = 0; j < packWidth; ++j) {
+                  scaledValue[j] = packedLowpScale(static_cast<RAT>(tokenValue[j]),
+                                                   indexAndScale.probability);
+                }
+              }
+              else {
+                constexpr Converter<float2, RAT> loadOp{};
+                constexpr Converter<RAT, float2> storeOp{};
+                const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+                for (int j = 0; j < packWidth; ++j) {
+                  scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+                }
               }
             }
             else {

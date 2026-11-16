@@ -24,8 +24,6 @@ namespace flashmoe::processor
 {
   // fused GEMM, epilogue and data transfer
   // ARCH6: WriteGmem=false keeps the C tile in workspace smem for fused combine (no staging store).
-  // NCU24: fused C lives in a dedicated smem slab past AB (no overlay) so copy_fragment
-  // can proceed without a CTA sync — slow warps may still use AB while fast warps store C.
   template <
     typename TileGEMM,
     typename Activation,
@@ -66,12 +64,11 @@ namespace flashmoe::processor
     // rmem -> smem (combine-compatible dense row-major when !WriteGmem)
     if constexpr (!WriteGmem) {
       using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BN, cute::_1>>;
-      auto* __restrict__ cSlab = reinterpret_cast<ElementC*>(
-        static_cast<cuda::std::byte*>(workspace) + TileGEMM::SharedSizeAB::value);
-      auto sC = cute::make_tensor(cute::make_smem_ptr(cSlab), SCL{});
-      // NCU24: no pre-copy syncthreads — C slab does not alias AB.
+      auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
+      __syncthreads();
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
-      // Fused combine (SkipGmemLoad) syncs after token-id staging and publishes this sC write.
+      // NCU21: skip trailing syncthreads — fused combine (SkipGmemLoad) syncs
+      // after token-id staging, which also publishes this sC write.
     }
     else {
       auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
@@ -392,9 +389,7 @@ namespace flashmoe::processor
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            // NCU24: combine reads the dedicated C slab past AB.
-            auto* __restrict__ cSlab = workspace + TileGEMM1::SharedSizeAB::value;
-            combine<bM, bN, Arch, threads, combineMode, true>(S, H, cSlab, tokenIds, moeOutput,
+            combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
             if (!threadIdx.x) {
               const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
