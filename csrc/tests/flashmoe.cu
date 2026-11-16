@@ -373,14 +373,13 @@ void kickstart(const Options& opts) {
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
-  // Tunable gated smem slack: -1 default = full SharedSizeC.
+  // EPI3 asymmetric slack (see moe.cuh); -1 default.
 #ifndef FLASHMOE_GATED_SMEM_SLACK
 #define FLASHMOE_GATED_SMEM_SLACK (-1)
 #endif
-  constexpr auto gateSlack = (mt == flashmoe::MLPMatmulType::gated)
-    ? (FLASHMOE_GATED_SMEM_SLACK < 0 ? static_cast<int>(TileG0Host::SharedSizeC::value)
-                                    : FLASHMOE_GATED_SMEM_SLACK)
-    : 0;
+  constexpr auto gateSlack = (mt != flashmoe::MLPMatmulType::gated) ? 0
+    : (FLASHMOE_GATED_SMEM_SLACK >= 0 ? FLASHMOE_GATED_SMEM_SLACK
+       : (bN0 <= 64 ? 8192 : static_cast<int>(TileG0Host::SharedSizeC::value)));
   constexpr auto GEMM0Sz = cutlass::round_up(
     cute::max(gemm0AB, TileG0Host::SharedSizeC::value) + gateSlack,
     flashmoe::MAX_ALIGNMENT);
@@ -802,14 +801,15 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI1: HYB22 shared-A (reg-gate, no post-gated sync) + two-pass reg-gate (HYB20).
-  // Keep C-slab smem slack. Bar: beat HYB22.
+  // EPI3: EPI1 epilogue + asymmetric gate slack (8KiB shared-A / full two-pass)
+  // + Ampere gated pS=2. Bar: beat HYB17.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
+  // EPI3: Ampere gated pS=2 (prior pS=2 illegal was undersized AB+slack).
   constexpr auto pS = arch >= 900 ? 3 : arch >= 800
-    ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
+    ? 2
     : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
   static_assert(bM >= 1);
