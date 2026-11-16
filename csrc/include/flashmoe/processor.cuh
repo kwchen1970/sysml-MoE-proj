@@ -387,6 +387,18 @@ namespace flashmoe::processor
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
+            // HYB51: fuse-prefetch moeOutput rows into L2 after smem-resident GEMM1 so the
+            // SkipGmemLoad combine scatter hits warmer L2 (overlaps stIds fill + barrier).
+            // Distinct from PreferL1 / two-pass pS2 / bK128 / NCU22 token-id staging.
+            {
+              const auto outCol = static_cast<size_t>(nCoord) * static_cast<size_t>(bN);
+              const auto tileRows = task.tileSize();
+              for (uint i = threadIdx.x; i < tileRows; i += threads) {
+                const auto tok = tokenIds[i].tokenIdx;
+                __prefetch_global_l2(
+                  moeOutput + static_cast<size_t>(tok) * static_cast<size_t>(H) + outCol);
+              }
+            }
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
             combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
