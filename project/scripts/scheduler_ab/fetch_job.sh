@@ -1,0 +1,41 @@
+#!/bin/bash
+# Fetch a tool-lane job .out from Perlmutter scratch and run the keep-gate pipeline.
+#
+# Usage:
+#   ./fetch_job.sh 61378923 --cand HYB17B --base HYB17A --identity
+#   ./fetch_job.sh tool-noise-61378923.out --cand CAND --base HYB17 --media-dir ...
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+AB_ROOT=${AB_ROOT:-/pscratch/sd/r/rmf253/moe-exp/ab/tool}
+LOCAL_DIR=${LOCAL_DIR:-"${SCRIPT_DIR}/../../../results/ab_tool"}
+PIPELINE=${PIPELINE:-"${SCRIPT_DIR}/../../analysis/ab_tool/run_pipeline.sh"}
+HOST=${NERSC_HOST:-perlmutter.nersc.gov}
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: $0 JOBID|remote-or-local.out [pipeline args...]" >&2
+  exit 1
+fi
+
+SPEC=$1
+shift
+
+mkdir -p "$LOCAL_DIR"
+if [[ -f "$SPEC" ]]; then
+  LOCAL_OUT=$SPEC
+elif [[ "$SPEC" == *.out ]]; then
+  scp -q "${HOST}:${AB_ROOT}/jobs/${SPEC}" "$LOCAL_DIR/" 2>/dev/null \
+    || scp -q "${HOST}:${AB_ROOT}/noise/${SPEC}" "$LOCAL_DIR/" 2>/dev/null \
+    || scp -q "${HOST}:${AB_ROOT}/ncu/${SPEC}" "$LOCAL_DIR/"
+  LOCAL_OUT="${LOCAL_DIR}/$(basename "$SPEC")"
+else
+  # bare job id — search tool subdirs
+  remote=$(ssh -o BatchMode=yes "$HOST" \
+    "ls ${AB_ROOT}/jobs/*-${SPEC}.out ${AB_ROOT}/noise/*-${SPEC}.out ${AB_ROOT}/ncu/*-${SPEC}.out 2>/dev/null | head -1")
+  [[ -n "$remote" ]] || { echo "no out for job $SPEC under $AB_ROOT"; exit 2; }
+  scp -q "${HOST}:${remote}" "$LOCAL_DIR/"
+  LOCAL_OUT="${LOCAL_DIR}/$(basename "$remote")"
+fi
+
+echo "LOCAL_OUT=$LOCAL_OUT"
+exec "$PIPELINE" "$LOCAL_OUT" --out-dir "${LOCAL_DIR}/gate-$(basename "$LOCAL_OUT" .out)" "$@"

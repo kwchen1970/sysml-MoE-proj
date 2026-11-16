@@ -1,0 +1,74 @@
+{
+  "meta": {},
+  "primary": {
+    "geo_ratio": 0.9872589190337837,
+    "geo_delta_pct": -1.274108096621629,
+    "wins": 7,
+    "losses": 4,
+    "n_shapes": 11,
+    "anchor": {
+      "S": 4096,
+      "H": 2048,
+      "I": 1408,
+      "E": 16,
+      "k": 6,
+      "cand_ms": 3.8217884,
+      "base_ms": 3.9038611999999997,
+      "ratio": 0.9789765066442424,
+      "delta_pct": -2.1023493355757594,
+      "cand_cv_pct": 3.7391212468812665,
+      "base_cv_pct": 4.015873402682907,
+      "cand_error_max": 0.069404,
+      "base_error_max": 0.067222,
+      "n_cand": 5,
+      "n_base": 5
+    },
+    "cand": "HYB17",
+    "base": "HYB2"
+  },
+  "extras": [
+    {
+      "cand": "HYB17",
+      "base": "BK64",
+      "geo_delta_pct": -4.695732326218893,
+      "wins": 11,
+      "losses": 0,
+      "anchor": {
+        "S": 4096,
+        "H": 2048,
+        "I": 1408,
+        "E": 16,
+        "k": 6,
+        "cand_ms": 3.8217884,
+        "base_ms": 3.8969608,
+        "ratio": 0.9807099932850235,
+        "delta_pct": -1.9290006714976493,
+        "cand_cv_pct": 3.7391212468812665,
+        "base_cv_pct": 3.2494330030215024,
+        "cand_error_max": 0.069404,
+        "base_error_max": 0.07031,
+        "n_cand": 5,
+        "n_base": 5
+      }
+    }
+  ],
+  "decision": {
+    "keep": true,
+    "verdict": "KEEP",
+    "ok_correct": true,
+    "ok_fast": true,
+    "ok_anchor": true,
+    "reasons": [
+      "WARNING geo |-1.274%| < mean cand CV 2.96% (near noise; raise ROUNDS or --min-geo-margin-pct)"
+    ],
+    "error_violations": 0,
+    "fail_lines": 0,
+    "mean_cand_cv_pct": 2.9557251895786556
+  },
+  "tags": [
+    "BK64",
+    "HYB14",
+    "HYB17",
+    "HYB2"
+  ]
+}
