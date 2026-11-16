@@ -394,14 +394,11 @@ void kickstart(const Options& opts) {
   if (kernelTopo == flashmoe::Topology::NVLINK_ONLY) {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::NVLINK_ONLY>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
-    // EPI20: PreferEqual — midpoint between PreferL1 (EPI14 +45%) and carveout=100 (EPI17 flat).
-    CHECK_CUDA(cudaFuncSetCacheConfig(kernel, cudaFuncCachePreferEqual));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
   else {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::MIXED>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
-    CHECK_CUDA(cudaFuncSetCacheConfig(kernel, cudaFuncCachePreferEqual));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
 
@@ -797,8 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI20: ARCH6 tip + cudaFuncCachePreferEqual (host). Reverts EPI19 L2 next-K.
-  // Not PreferL1 / carveout / pS0=3 / I<=4096. Bar: ARCH6.
+  // EPI21: ARCH6 tip + shared-A GEMM1 pS1=2 only when E<=64 AND S>=4096.
+  // Narrows EPI16 (E<=64 only, MARGINAL −0.92%) by skipping S=1024. PreferEqual abandoned (HYB54 dead).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -820,10 +817,10 @@ void drive(const int argc, char** argv) {
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C, auto pS0C) {
+  auto launch = [&](auto bN0C, auto pS0C, auto pS1C) {
     constexpr int bN0 = decltype(bN0C)::value;
     constexpr int pS0 = decltype(pS0C)::value;
-    constexpr int pS1 = pS; // GEMM1: ARCH6 gated default
+    constexpr int pS1 = decltype(pS1C)::value;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
     }
@@ -869,9 +866,14 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{}, cute::Int<2>{}); // ARCH6/NCU10: deepen shared-A GEMM0 only
+    // EPI21: deepen GEMM1 only on large-S + small-E shared-A (≠ EPI16 which also hit S=1024).
+    if (E <= 64 && S >= 4096) {
+      launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<2>{});
+    } else {
+      launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
+    }
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
   }
 }
 
