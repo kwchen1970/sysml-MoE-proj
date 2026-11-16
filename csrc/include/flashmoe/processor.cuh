@@ -10,6 +10,10 @@
 #include <cuda/atomic>
 #include <nvshmem.h>
 
+#ifndef FLASHMOE_HYB_VARIANT
+#define FLASHMOE_HYB_VARIANT 17
+#endif
+
 #include "combine.cuh" //  combine function
 #include "infra/constants.cuh"
 #include "infra/packed.cuh"
@@ -94,19 +98,47 @@ namespace flashmoe::processor
     constexpr Converter<ElementC, typename TileGEMM::AccumType> storeConv{};
     const auto tileCoord = tile::idx2Coord(M / BM{}, N / BN{}, tileIdx);
     constexpr TileGEMM tileMainloop{};
-    // bN<=64: shared-A (two accumulators fit). Wider tiles: classic two-pass.
+    // bN<=64: shared-A. Variants via FLASHMOE_HYB_VARIANT (17 keep / 18 seq-B / 19 reg-gate / 21 drop sync).
     if constexpr (BN{} <= 64) {
+#if FLASHMOE_HYB_VARIANT == 18
+      constexpr auto abBytes = TileGEMM::SharedSizeABGated1::value;
+#else
+      constexpr auto abBytes = TileGEMM::SharedSizeABGated::value;
+#endif
       auto* __restrict__ gateCache = workspace + cutlass::round_up(cute::max(TileGEMM::SharedSizeC::value,
-          TileGEMM::SharedSizeABGated::value), TileGEMM::GeneralAlignment::value);
+          abBytes), TileGEMM::GeneralAlignment::value);
       auto accGate = BLAS::suggest_accumulator();
       auto accUp = BLAS::suggest_accumulator();
+#if FLASHMOE_HYB_VARIANT == 18
+      tileMainloop.gatedSeqB(workspace, a, b, bV, accGate, accUp, M, N, K, tileCoord);
+#else
       tileMainloop.gated(workspace, a, b, bV, accGate, accUp, M, N, K, tileCoord);
+#endif
+#if FLASHMOE_HYB_VARIANT != 21 && FLASHMOE_HYB_VARIANT != 22
       __syncthreads();
+#endif
       const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(tileCoord));
       auto d_frag = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accGate);
       const auto c_frag = accGate.get_results();
       constexpr int accum_size = cublasdx::size(c_frag);
+#if FLASHMOE_HYB_VARIANT == 19 || FLASHMOE_HYB_VARIANT == 22 || FLASHMOE_HYB_VARIANT == 23
+      // ElementC register-resident silu(gate); keep AB+C smem sizing slack (HYB4 drop failed).
+      auto gate_act = cublasdx::make_fragment_like<ElementC>(accGate.get_results());
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
+        gate_act(i) = storeConv(swishAlpha * act(g));
+      });
+      auto cv_frag = accUp.get_results();
+      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accUp);
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
+      });
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        d_frag(i) = storeConv(cv_frag(i) * loadConv(gate_act(i)));
+      });
+#else
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
         const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
         d_frag(i) = storeConv(swishAlpha * act(g));
@@ -124,7 +156,7 @@ namespace flashmoe::processor
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
         d_frag(i) = storeConv(cv_frag(i) * loadConv(d_frag(i)));
       });
-      // Direct rmem->gmem for C on shared-A too (keep gateCache for silu).
+#endif
       auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, gC, accUp);
     } else {
@@ -138,6 +170,24 @@ namespace flashmoe::processor
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accumulator);
       const auto c_frag = accumulator.get_results();
       constexpr int accum_size = cublasdx::size(c_frag);
+#if FLASHMOE_HYB_VARIANT == 20 || FLASHMOE_HYB_VARIANT == 23
+      // Two-pass: keep silu(gate) in ElementC registers across the up GEMM.
+      auto gate_act = cublasdx::make_fragment_like<ElementC>(accumulator.get_results());
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
+        gate_act(i) = storeConv(swishAlpha * act(g));
+      });
+      tileMainloop(workspace, a, bV, accumulator, M, N, K, tileCoord);
+      auto cv_frag = accumulator.get_results();
+      const auto gV = tile::getBias<BM{}, BN{}>(biasV, M, N, cute::select<0, 1>(tileCoord));
+      cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gV, d_frag, accumulator);
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        cv_frag(i) = cv_frag(i) + loadConv(d_frag(i));
+      });
+      cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+        d_frag(i) = storeConv(cv_frag(i) * loadConv(gate_act(i)));
+      });
+#else
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
         const auto g = (c_frag(i) + loadConv(d_frag(i))) * swishBeta;
         d_frag(i) = storeConv(swishAlpha * act(g));
@@ -156,7 +206,7 @@ namespace flashmoe::processor
       cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
         d_frag(i) = storeConv(cv_frag(i) * loadConv(d_frag(i)));
       });
-      // Direct rmem->gmem on two-pass (HYB14): skip sC bounce.
+#endif
       auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, gC, accumulator);
     }
