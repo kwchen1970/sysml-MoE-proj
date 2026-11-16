@@ -14,10 +14,13 @@ set -euo pipefail
 AB_ROOT=${AB_ROOT:-/pscratch/sd/r/rmf253/moe-exp/ab/tool}
 BIN_DIR=${BIN_DIR:-/pscratch/sd/r/rmf253/moe-exp/ab}
 REPO_ENV=${REPO_ENV:-/pscratch/sd/r/rmf253/moe-exp/repo/project/scripts/env.sh}
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Slurm copies the .sbatch into /var/spool/slurmd/job*/ — siblings are not there.
+SCRIPT_DIR=${AB_SCRIPTS:-/pscratch/sd/r/rmf253/moe-exp/ab/tool/scripts/scheduler_ab}
 HYB17=${HYB17:-"${BIN_DIR}/testFlashMoE.hyb17"}
+HARNESS="${SCRIPT_DIR}/ab_bench.sbatch"
 
 [[ -x "$HYB17" ]] || { echo "missing $HYB17"; exit 2; }
+[[ -f "$HARNESS" ]] || { echo "missing harness $HARNESS"; exit 2; }
 mkdir -p "${AB_ROOT}/noise"
 # shellcheck disable=SC1090
 source "$REPO_ENV"
@@ -36,6 +39,6 @@ export CAND_TAG=HYB17B
 export BINS="HYB17A=${HYB17} HYB17B=${HYB17}"
 export SHAPES_OVERRIDE=$'4096 2048 2048 32 2\n4096 2048 1408 16 6\n16384 2048 2048 32 2\n4096 2048 8192 32 2'
 
-echo "META compact_identity host=$(hostname) job=${SLURM_JOB_ID:-local} rounds=$ROUNDS"
-bash <(grep -v '^#SBATCH' "${SCRIPT_DIR}/ab_bench.sbatch")
+echo "META compact_identity host=$(hostname) job=${SLURM_JOB_ID:-local} rounds=$ROUNDS harness=$HARNESS"
+bash <(grep -v '^#SBATCH' "$HARNESS")
 echo "IDENTITY_NOISE_DONE"

@@ -18,7 +18,8 @@ source "$REPO_ENV"
 export NVSHMEM_REMOTE_TRANSPORT=none
 export LD_LIBRARY_PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/25.5/comm_libs/12.9/nccl-2.26/lib:${LD_LIBRARY_PATH:-}
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Slurm copies the .sbatch into /var/spool/slurmd/job*/ — siblings are not there.
+SCRIPT_DIR=${AB_SCRIPTS:-/pscratch/sd/r/rmf253/moe-exp/ab/tool/scripts/scheduler_ab}
 WRAP=${WRAP:-"${SCRIPT_DIR}/ncu_wrap.sh"}
 SET=${SET:-speedoflight}
 read -r -a BIN_LIST <<< "${BINS:?set BINS=\"TAG=path ...\"}"

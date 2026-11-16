@@ -1,0 +1,18 @@
+-------------------------------------------------------------------------------
+There are messages associated with the following module(s):
+-------------------------------------------------------------------------------
+
+libfabric/1.20.1:
+   This module is deprecated and will be removed in a future maintenance.
+   Please use the default libfabric instead.
+
+-------------------------------------------------------------------------------
+
+
+The following have been reloaded with a version change:
+  1) cudatoolkit/13.2 => cudatoolkit/12.9
+  2) libfabric/2.3.1 => libfabric/1.20.1
+
+META compact_identity host=nid008612 job=61379335 rounds=10
+grep: /var/spool/slurmd/job61379335/ab_bench.sbatch: No such file or directory
+IDENTITY_NOISE_DONE

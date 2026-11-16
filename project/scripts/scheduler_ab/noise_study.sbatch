@@ -16,7 +16,8 @@ set -euo pipefail
 AB_ROOT=${AB_ROOT:-/pscratch/sd/r/rmf253/moe-exp/ab/tool}
 BIN_DIR=${BIN_DIR:-/pscratch/sd/r/rmf253/moe-exp/ab}
 REPO_ENV=${REPO_ENV:-/pscratch/sd/r/rmf253/moe-exp/repo/project/scripts/env.sh}
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Slurm copies the .sbatch into /var/spool/slurmd/job*/ — siblings are not there.
+SCRIPT_DIR=${AB_SCRIPTS:-/pscratch/sd/r/rmf253/moe-exp/ab/tool/scripts/scheduler_ab}
 HARNESS="${SCRIPT_DIR}/ab_bench.sbatch"
 
 HYB17=${HYB17:-"${BIN_DIR}/testFlashMoE.hyb17"}
