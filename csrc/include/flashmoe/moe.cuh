@@ -79,22 +79,19 @@ namespace flashmoe::moe
     constexpr int bM = bM0;
     using TileG0 = tile::CollectiveMainloop<bM0, bN0, bK0, Config::Arch::value, Element,
       typename Config::AccumType, threads, pSK0>;
-    // EPI7/NCU10: shared-A reg-gate → no gateCache surcharge; two-pass keeps C slab.
-#ifndef FLASHMOE_GATED_SMEM_SLACK
-#define FLASHMOE_GATED_SMEM_SLACK (-1)
-#endif
+    // EPI11: NCU10-exact geometric smem budget (vs EPI cosize SharedSizeC oversize).
+    // Shared-A reg-gate → gateCacheBytes=0; two-pass keeps geometric gateCache slab.
     constexpr auto gemm0AB = (mt == MLPMatmulType::gated && bN0 <= 64)
       ? TileG0::SharedSizeABGated::value
       : TileG0::SharedSizeAB::value;
-    constexpr auto gateSlack = !(mt == MLPMatmulType::gated) ? 0
-      : (FLASHMOE_GATED_SMEM_SLACK >= 0 ? FLASHMOE_GATED_SMEM_SLACK
-         : (bN0 <= 64 ? 0 : TileG0::SharedSizeC::value));
-    constexpr auto GEMM0Sz = cutlass::round_up(
-      cute::max(gemm0AB, TileG0::SharedSizeC::value) + gateSlack, MAX_ALIGNMENT);
+    constexpr auto gateCacheBytes = (mt == MLPMatmulType::gated && bN0 > 64)
+      ? sizeof(Element) * bM * bN0 : 0;
+    constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
+      + gateCacheBytes, MAX_ALIGNMENT);
     using TileG1 = tile::CollectiveMainloop<bM1, bN1, bK1, Config::Arch::value, Element,
       typename Config::AccumType, threads, pSK1>;
-    constexpr auto GEMM1Sz = cutlass::round_up(
-      cute::max(TileG1::SharedSizeAB::value, TileG1::SharedSizeC::value), MAX_ALIGNMENT);
+    constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
+      sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
     const auto OSSz = os::getSharedSize<threads, bM>(world, numLocalExperts, E, EC, tilesN1);
     const auto taskSz = sizeof(Task) * tilesN1;

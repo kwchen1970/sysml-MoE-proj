@@ -369,23 +369,16 @@ void kickstart(const Options& opts) {
 
   const auto roundEC = cute::ceil_div(opts.EC, bM) * bM;
   using TileG0Host = flashmoe::tile::CollectiveMainloop<bM, bN0, bK0, Arch, Element, AccumType, threads, pSK0>;
-  using TileG1Host = flashmoe::tile::CollectiveMainloop<bM, bN1, bK1, Arch, Element, AccumType, threads, pSK1>;
   constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
     ? TileG0Host::SharedSizeABGated::value
     : TileG0Host::SharedSizeAB::value;
-  // EPI7/NCU10: shared-A gateSlack=0; two-pass keeps C slab (see moe.cuh).
-#ifndef FLASHMOE_GATED_SMEM_SLACK
-#define FLASHMOE_GATED_SMEM_SLACK (-1)
-#endif
-  constexpr auto gateSlack = (mt != flashmoe::MLPMatmulType::gated) ? 0
-    : (FLASHMOE_GATED_SMEM_SLACK >= 0 ? FLASHMOE_GATED_SMEM_SLACK
-       : (bN0 <= 64 ? 0 : static_cast<int>(TileG0Host::SharedSizeC::value)));
-  constexpr auto GEMM0Sz = cutlass::round_up(
-    cute::max(gemm0AB, TileG0Host::SharedSizeC::value) + gateSlack,
-    flashmoe::MAX_ALIGNMENT);
-  constexpr auto GEMM1Sz = cutlass::round_up(
-    cute::max(TileG1Host::SharedSizeAB::value, TileG1Host::SharedSizeC::value),
-    flashmoe::MAX_ALIGNMENT);
+  // EPI11: NCU10-exact geometric GEMM0Sz/GEMM1Sz + gateCacheBytes (see moe.cuh).
+  constexpr auto gateCacheBytes = (mt == flashmoe::MLPMatmulType::gated && bN0 > 64)
+    ? sizeof(Element) * bM * bN0 : 0;
+  constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
+    + gateCacheBytes, flashmoe::MAX_ALIGNMENT);
+  constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
+    sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
 
   const auto kernelSz = flashmoe::moe::kernelSMEM<Config>(opts.E, opts.EC, world, numLocalExperts, tilesN1);
   int maxSharedMemory = 0;
@@ -801,17 +794,18 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI10: different lever — shared-A bK=128 @ pS=1 (wider K tile), not pS deepen.
-  // Two-pass stays bK=64 pS=1. Bar: beat NCU10.
+  // EPI11: restore NCU10 compute recipe; lever = geometric GEMM0Sz/GEMM1Sz + gateCacheBytes.
+  // Bar: beat ARCH6. (EPI10 bK=128 NO_KEEP; NCU15/NCU16 also dead.)
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
-  constexpr int bKDefault = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
+  constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
+  constexpr int bK1 = bK0;
   constexpr auto pS = arch >= 900 ? 3 : arch >= 800
     ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1;
   constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
   static_assert(bM >= 1);
-  if (H <= bKDefault || H % bKDefault != 0 || H < bN1 || H % bN1 != 0) {
+  if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
     throw std::invalid_argument("H is invalid");
   }
   if (S < 1 || (S > bM && S % bM != 0)) {
@@ -823,17 +817,12 @@ void drive(const int argc, char** argv) {
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C, auto bK0C, auto pS0C, auto pS1C) {
+  auto launch = [&](auto bN0C, auto pS0C, auto pS1C) {
     constexpr int bN0 = decltype(bN0C)::value;
-    constexpr int bK0 = decltype(bK0C)::value;
-    constexpr int bK1 = bK0;
     constexpr int pS0 = decltype(pS0C)::value;
     constexpr int pS1 = decltype(pS1C)::value;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
-    }
-    if (H <= bK0 || H % bK0 != 0) {
-      throw std::invalid_argument("H is invalid for bK");
     }
     switch (E) {
       case 8:
@@ -877,10 +866,10 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI10: wider K tile instead of pipeline deepen
-    launch(cute::Int<64>{}, cute::Int<128>{}, cute::Int<1>{}, cute::Int<1>{});
+    // NCU10 shared-A compute: GEMM0 pS=2, GEMM1 pS=1 (smem lever is in moe.cuh).
+    launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<1>{});
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<bKDefault>{}, cute::Int<pS>{}, cute::Int<pS>{});
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
   }
 }
 
