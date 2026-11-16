@@ -792,8 +792,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // Ampere gated: I<4096 uses shared-A at bN0=64; larger I keeps BK64 two-pass
-  // at bN0=128 (shared-A dual-accum spills there; narrow-N alone is slower).
+  // Ampere gated HYB14: HYB2 shared-A at bN0=64 for I<4096 && k<=2; two-pass
+  // (bN0=128) uses direct rmem->gmem C store (skip sC).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
