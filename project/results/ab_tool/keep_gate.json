@@ -63,7 +63,14 @@
     ],
     "error_violations": 0,
     "fail_lines": 0,
-    "mean_cand_cv_pct": 2.9557251895786556
+    "mean_cand_cv_pct": 2.9557251895786556,
+    "bootstrap_identity": {
+      "tag": "HYB17",
+      "geo_delta_pct": 0.9385333115881078,
+      "abs_geo_delta_pct": 0.9385333115881078,
+      "n_shapes": 11,
+      "recommended_min_geo_margin_pct": 1.4077999673821617
+    }
   },
   "tags": [
     "BK64",

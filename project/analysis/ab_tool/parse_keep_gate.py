@@ -134,6 +134,8 @@ def summarize(rows: list[dict[str, Any]]) -> dict[tuple, dict[str, Any]]:
         buckets[key].append(row)
     out: dict[tuple, dict[str, Any]] = {}
     for key, vals in buckets.items():
+        # Preserve round order for odd/even bootstrap.
+        vals = sorted(vals, key=lambda v: v["round"])
         lats = [v["latency_ms"] for v in vals]
         errs = [v["error_pct"] for v in vals]
         mean = statistics.mean(lats)
@@ -147,8 +149,34 @@ def summarize(rows: list[dict[str, Any]]) -> dict[tuple, dict[str, Any]]:
             "cv_pct": (100.0 * statistics.stdev(lats) / mean) if len(lats) > 1 and mean else 0.0,
             "error_max": max(errs) if errs else float("nan"),
             "error_mean": statistics.mean(errs) if errs else float("nan"),
+            "lats": lats,
         }
     return out
+
+
+def odd_even_identity_geo(stats: dict[tuple, dict[str, Any]], tag: str) -> dict[str, Any]:
+    """Estimate identity noise by splitting one tag's rounds into odd/even means."""
+    ratios = []
+    shapes = []
+    for key, st in stats.items():
+        if key[0] != tag or st["n"] < 4:
+            continue
+        lats = st["lats"]
+        a = statistics.mean(lats[0::2])
+        b = statistics.mean(lats[1::2])
+        if a > 0 and b > 0:
+            ratios.append(a / b)
+            shapes.append(key[1:])
+    if not ratios:
+        return {"geo_delta_pct": float("nan"), "n_shapes": 0, "tag": tag}
+    geo = geo_mean(ratios)
+    return {
+        "tag": tag,
+        "geo_delta_pct": 100.0 * (geo - 1.0),
+        "abs_geo_delta_pct": abs(100.0 * (geo - 1.0)),
+        "n_shapes": len(ratios),
+        "recommended_min_geo_margin_pct": max(1.0, abs(100.0 * (geo - 1.0)) * 1.5),
+    }
 
 
 def compare(
@@ -250,10 +278,22 @@ def keep_decision(
     # Measurement-quality hint from cand CVs (not a hard gate unless margin set).
     cand_cvs = [p["cand_cv_pct"] for p in cmp["per_shape"] if p["n_cand"] > 1]
     mean_cv = statistics.mean(cand_cvs) if cand_cvs else float("nan")
+    bootstrap = cmp.get("bootstrap_identity") or {}
+    boot_abs = bootstrap.get("abs_geo_delta_pct")
     if mean_cv == mean_cv and abs(cmp["geo_delta_pct"]) < mean_cv and ok_fast:
         reasons.append(
             f"WARNING geo |{cmp['geo_delta_pct']:.3f}%| < mean cand CV {mean_cv:.2f}% "
             "(near noise; raise ROUNDS or --min-geo-margin-pct)"
+        )
+    if (
+        boot_abs == boot_abs
+        and boot_abs is not None
+        and abs(cmp["geo_delta_pct"]) < boot_abs
+        and ok_fast
+    ):
+        reasons.append(
+            f"WARNING geo |{cmp['geo_delta_pct']:.3f}%| < odd/even identity "
+            f"|{boot_abs:.3f}%| on {cand}"
         )
 
     keep = bool(ok_correct and ok_fast and ok_anchor)
@@ -267,6 +307,7 @@ def keep_decision(
         "error_violations": len(err_viol),
         "fail_lines": len(fails),
         "mean_cand_cv_pct": mean_cv,
+        "bootstrap_identity": bootstrap,
     }
 
 
@@ -391,6 +432,13 @@ def write_outputs(
     mean_cv = decision.get("mean_cand_cv_pct")
     if mean_cv is not None and mean_cv == mean_cv:
         lines.append(f"measurement: mean cand CV {mean_cv:.2f}% across shapes")
+    boot = cmp.get("bootstrap_identity") or decision.get("bootstrap_identity") or {}
+    if boot.get("n_shapes"):
+        lines.append(
+            f"bootstrap identity ({boot.get('tag')} odd/even): "
+            f"geo {boot['geo_delta_pct']:+.3f}% over {boot['n_shapes']} shapes; "
+            f"recommend --min-geo-margin-pct {boot['recommended_min_geo_margin_pct']:.2f}"
+        )
     for e in extras:
         lines.append(f"extra {e['cand']} vs {e['base']}: geo {e['geo_delta_pct']:+.3f}%")
     if decision["reasons"]:
@@ -445,6 +493,8 @@ def main() -> int:
         return 3
 
     primary = compare(stats, args.cand, args.base)
+    boot = odd_even_identity_geo(stats, args.cand)
+    primary["bootstrap_identity"] = boot
     extras = []
     for base in args.also_vs:
         if base in tags and base != args.base:
