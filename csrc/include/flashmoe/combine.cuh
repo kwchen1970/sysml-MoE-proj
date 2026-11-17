@@ -25,6 +25,8 @@ namespace flashmoe
 
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
+  // ARCH21: SkipGmemLoad pulls TPS on-demand from gmem during RedAdd/store — no stIds
+  // staging and no second CTA barrier (densify sync already ordered C). ≠ densify-ids.
   template <
     int bM,
     int bN,
@@ -46,23 +48,29 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    __shared__ TPS stIds[bM];
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
-    for (int i = threadIdx.x; i < bM; i += threads) {
-      stIds[i] = tokenIndices[i];
+    const TPS* __restrict__ stIds;
+    if constexpr (SkipGmemLoad) {
+      // ARCH21: on-demand gmem TPS; fGET densify barrier already published C.
+      stIds = tokenIndices;
     }
-    if constexpr (!SkipGmemLoad) {
+    else {
+      __shared__ TPS stIdsLocal[bM];
+      for (int i = threadIdx.x; i < bM; i += threads) {
+        stIdsLocal[i] = tokenIndices[i];
+      }
+      stIds = stIdsLocal;
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
       static_assert(cute::is_compatible<decltype(gC.layout()), decltype(sC.layout())>::value);
       // copy processed tile from gmem -> smem
       cublasdx::copy<threads, ElementAlignment<Element, bN>>(threadIdx.x, gC, sC);
       cublasdx::copy_wait();
+      __syncthreads();
     }
-    __syncthreads();
     if constexpr (c == CombineMode::single) {
       using VTD = VectorTypeDescriptor<typename RawType<Element>::type, ElementAlignment<Element, bN>>;
       using VT = VTD::VectorType;
