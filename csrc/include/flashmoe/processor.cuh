@@ -366,7 +366,7 @@ namespace flashmoe::processor
                 offset, pA.tQH);
             }
           }
-          __syncthreads();
+          // ARCH16: drop redundant post-notifyNext barrier — next loop iteration syncs after doorbell.
         }
         break;
         case TaskType::GEMM1: {
@@ -391,9 +391,10 @@ namespace flashmoe::processor
             combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
             if (!threadIdx.x) {
-              // ARCH15: NVLINK fuse path never stores PacketStage::last flags — skip
-              // producerBitMap RMW; only sense-flip for epoch completion.
-              (void)producerBitMap;
+              const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
+              const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
+              producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
+              // No flag store — subscriber pre-visits combine flags; sense flipped in-place.
               constexpr uint subCount = threads - WARP_SIZE;
               const auto flagIdx = static_cast<uint>(nCoord) * flagColStride
                 + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord);

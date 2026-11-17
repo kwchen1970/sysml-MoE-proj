@@ -23,6 +23,24 @@ namespace flashmoe
 #endif
   }
 
+  // ARCH16: native half2/bf162 scale for fused combine RedAdd (skip float2 round-trip).
+  template <typename RAT>
+  __device__ __forceinline__
+  RAT nativePairScale(const RAT& v, const float& p) {
+    if constexpr (cuda::std::is_same_v<RAT, __half2>) {
+      return __hmul2(v, __float2half2_rn(p));
+    }
+    else if constexpr (cuda::std::is_same_v<RAT, __nv_bfloat162>) {
+      return __hmul2(v, __float2bfloat162_rn(p));
+    }
+    else {
+      constexpr Converter<float2, RAT> loadOp{};
+      constexpr Converter<RAT, float2> storeOp{};
+      const auto scale2 = float2{p, p};
+      return storeOp(float2Mul(loadOp(v), scale2));
+    }
+  }
+
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
   template <
@@ -162,13 +180,8 @@ namespace flashmoe
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
           if constexpr (RAD::Width::value == 2) {
-            constexpr Converter<float2, RAT> loadOp{};
-            constexpr Converter<RAT, float2> storeOp{};
-            // fp16x2 or bf16x2
-            const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
             for (int j = 0; j < packWidth; ++j) {
-              // convert to float2 -> multiply -> convert back
-              scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+              scaledValue[j] = nativePairScale(tokenValue[j], indexAndScale.probability);
             }
           }
           else {
@@ -176,7 +189,6 @@ namespace flashmoe
             constexpr Converter<AccumType, RAT> loadOp{};
             constexpr Converter<RAT, AccumType> storeOp{};
             for (int j = 0; j < packWidth; ++j) {
-              // convert to float -> multiply -> convert back
               scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
             }
           }
@@ -200,13 +212,8 @@ namespace flashmoe
             RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
             if constexpr (RAD::Width::value == 2) {
-              constexpr Converter<float2, RAT> loadOp{};
-              constexpr Converter<RAT, float2> storeOp{};
-              // fp16x2 or bf16x2
-              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float2 -> multiply -> convert back
-                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+                scaledValue[j] = nativePairScale(tokenValue[j], indexAndScale.probability);
               }
             }
             else {
@@ -214,7 +221,6 @@ namespace flashmoe
               constexpr Converter<AccumType, RAT> loadOp{};
               constexpr Converter<RAT, AccumType> storeOp{};
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float -> multiply -> convert back
                 scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
               }
             }
@@ -236,13 +242,8 @@ namespace flashmoe
           const auto tokIdx = indexAndScale.tokenIdx;
           if (idx < actualElems) {
             if constexpr (RAD::Width::value == 2) {
-              constexpr Converter<float2, RAT> loadOp{};
-              constexpr Converter<RAT, float2> storeOp{};
-              // fp16x2 or bf16x2
-              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float2 -> multiply -> convert back
-                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+                scaledValue[j] = nativePairScale(tokenValue[j], indexAndScale.probability);
               }
             }
             else {
@@ -250,7 +251,6 @@ namespace flashmoe
               constexpr Converter<AccumType, RAT> loadOp{};
               constexpr Converter<RAT, AccumType> storeOp{};
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float -> multiply -> convert back
                 scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
               }
             }
