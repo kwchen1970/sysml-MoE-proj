@@ -79,6 +79,89 @@ namespace flashmoe::processor
     }
   }
 
+  // ARCH18: register-resident fused GEMM1→combine (skip dense smem C densify).
+  // Epilogue stays in d_frag; map_fragment_index → scale → RedAdd/store to moeOutput.
+  // Different lever than ARCH17 workspace-tail TPS densify and ARCH16 __hmul2 scale.
+  // No PreferL1, doorbell skip, or work-steal.
+  template <
+    typename TileGEMM,
+    int Arch,
+    int threads,
+    CombineMode combineMode,
+    typename Element
+  >
+  __forceinline__ __device__
+  void fGET_fuseCombineRmem(void* __restrict__ const& workspace,
+                            const Element* __restrict__ const& a,
+                            const Element* __restrict__ const& b,
+                            const Element* __restrict__ const& bias,
+                            const int& M, const int& N, const int& K, const int& tileIdx,
+                            const TPS* __restrict__ const& tokenIds,
+                            Element* __restrict__ const& moeOutput,
+                            const int& /*S*/, const int& H,
+                            const uint& tileSize,
+                            const uint& nCoord) {
+    using BLAS = TileGEMM::BLAS;
+    auto accumulator = BLAS::suggest_accumulator();
+    using BM = cute::Int<cublasdx::size_of<BLAS>::m>;
+    using BN = cute::Int<cublasdx::size_of<BLAS>::n>;
+    const auto gemmTileCoord = tile::idx2Coord(M / BM{}, N / BN{}, tileIdx);
+    constexpr TileGEMM tileMainloop{};
+    tileMainloop(workspace, a, b, accumulator, M, N, K, gemmTileCoord);
+    const auto gD = tile::getBias<BM{}, BN{}>(bias, M, N, cute::select<0, 1>(gemmTileCoord));
+    auto d_frag = cublasdx::make_fragment_like<Element>(accumulator.get_results());
+    cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(gD, d_frag, accumulator);
+    constexpr Converter<typename decltype(accumulator)::value_type, Element> loadConv{};
+    constexpr Converter<Element, typename decltype(accumulator)::value_type> storeConv{};
+    const auto c_frag = accumulator.get_results();
+    constexpr int accum_size = cublasdx::size(c_frag);
+    cute::for_each(cute::make_int_sequence<accum_size>{}, [&](auto i) {
+      d_frag(i) = storeConv(c_frag(i) + loadConv(d_frag(i)));
+    });
+    // AB smem released; stage routing ids only (no C densify into workspace).
+    __syncthreads();
+    __shared__ TPS stIds[BM{}];
+    for (int i = static_cast<int>(threadIdx.x); i < BM{}; i += threads) {
+      stIds[i] = tokenIds[i];
+    }
+    __syncthreads();
+
+    using AccumType = float;
+    constexpr Converter<AccumType, Element> toF{};
+    constexpr Converter<Element, AccumType> fromF{};
+    constexpr RedAdd<RedArch<Arch>, Element, 1> redOp{};
+    using Pack1 = cutlass::AlignedArray<Element, 1>;
+
+    if (accumulator.is_thread_active()) {
+      cute::for_each(cute::make_identity_tensor(cute::shape(d_frag)), [&](auto idx) {
+        if constexpr (decltype(accumulator.is_predicated())::value) {
+          if (!accumulator.is_index_in_bounds(idx)) {
+            return;
+          }
+        }
+        const auto mn = accumulator.map_fragment_index(idx);
+        const int row = static_cast<int>(cute::get<0>(mn));
+        const int col = static_cast<int>(cute::get<1>(mn));
+        if (row < static_cast<int>(tileSize)) {
+          const auto tps = stIds[row];
+          const Element scaled = fromF(toF(d_frag(idx)) * tps.probability);
+          Element* __restrict__ dst = moeOutput
+            + static_cast<size_t>(tps.tokenIdx) * static_cast<size_t>(H)
+            + static_cast<size_t>(nCoord) * static_cast<size_t>(BN{})
+            + static_cast<size_t>(col);
+          if constexpr (combineMode == CombineMode::single) {
+            *dst = scaled;
+          }
+          else {
+            Pack1 pack{};
+            pack[0] = scaled;
+            redOp(dst, pack);
+          }
+        }
+      });
+    }
+  }
+
   template <
     typename TileGEMM,
     typename Activation,
@@ -380,16 +463,13 @@ namespace flashmoe::processor
           const auto mCoord = task.tileIdx / tilesN1;
           const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
-            // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
-            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
-              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
+            // ARCH18: register-resident fuse — GEMM1 epilogue RedAdds from rmem (no dense smem C).
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
-            const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
-              static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
+            fGET_fuseCombineRmem<TileGEMM1, Arch, threads, combineMode, Element>(
+              workspace, aP, bP, biasP, task.M(), H, I, task.tileIdx,
+              tokenIds, moeOutput, S, H, task.tileSize(), static_cast<uint>(nCoord));
             if (!threadIdx.x) {
               const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
               const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
