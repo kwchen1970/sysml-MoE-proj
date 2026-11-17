@@ -258,6 +258,54 @@ namespace flashmoe::moe
     FLASHMOE_TRACE_FINISH();
   }
 
+  // NCU39: Ampere+ L2 access-policy window over local Down weights only.
+  // Pure persist lever for fused GEMM1 B (ARCH6 mid L1TEX streaming) —
+  // ≠ NCU37 single-hot, ≠ NCU38 256KB handoff prefetch, ≠ PreferL1 / pS0=1.
+  // Not capturable — skip while the stream is capturing a CUDA graph.
+  template <typename Config>
+  __host__ __forceinline__
+  void enableDownWeightL2Persist(const KernelArgs& kArgs, const Context& ctx, cudaStream_t stream) {
+    if (kArgs.expertDownWeights == nullptr || ctx.nLx == 0 || kArgs.I == 0 || kArgs.H == 0) {
+      return;
+    }
+    cudaStreamCaptureStatus capture = cudaStreamCaptureStatusNone;
+    if (cudaStreamIsCapturing(stream, &capture) != cudaSuccess ||
+        capture != cudaStreamCaptureStatusNone) {
+      return;
+    }
+    int device = 0;
+    if (cudaGetDevice(&device) != cudaSuccess) {
+      return;
+    }
+    cudaDeviceProp prop{};
+    if (cudaGetDeviceProperties(&prop, device) != cudaSuccess ||
+        prop.major < 8 || prop.persistingL2CacheMaxSize == 0 ||
+        prop.accessPolicyMaxWindowSize == 0) {
+      return;
+    }
+    const size_t downBytes = static_cast<size_t>(ctx.nLx) * static_cast<size_t>(kArgs.I) *
+      static_cast<size_t>(kArgs.H) * sizeof(typename Config::DType);
+    if (downBytes == 0) {
+      return;
+    }
+    const size_t windowBytes = cute::min(downBytes, static_cast<size_t>(prop.accessPolicyMaxWindowSize));
+    const size_t persistBytes = cute::min(windowBytes,
+      static_cast<size_t>(prop.persistingL2CacheMaxSize));
+    if (persistBytes == 0) {
+      return;
+    }
+    (void)cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, persistBytes);
+    cudaStreamAttrValue attr{};
+    attr.accessPolicyWindow.base_ptr =
+      const_cast<void*>(static_cast<const void*>(kArgs.expertDownWeights));
+    attr.accessPolicyWindow.num_bytes = windowBytes;
+    attr.accessPolicyWindow.hitRatio =
+      static_cast<float>(persistBytes) / static_cast<float>(windowBytes);
+    attr.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
+    attr.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
+    (void)cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow, &attr);
+  }
+
   template <
     typename Config,
     Topology topo,
@@ -265,6 +313,7 @@ namespace flashmoe::moe
   >
   __host__ __forceinline__
   void forwardHost(const KernelArgs& kArgs, const Context& ctx, cudaStream_t stream) {
+    enableDownWeightL2Persist<Config>(kArgs, ctx, stream);
     if constexpr (Config::CM::value == CombineMode::plural) {
       cudaMemsetAsync(kArgs.moeOut, 0, sizeof(typename Config::DType) * kArgs.S * static_cast<size_t>(kArgs.H), stream);
     }
