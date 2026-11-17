@@ -24,10 +24,11 @@ namespace flashmoe::scheduler {
 #elif FLASHMOE_ARCH >= 900
   constexpr int PROCESSOR_STATE_SIZE = 5;
 #else
-  constexpr int PROCESSOR_STATE_SIZE = 8;
+  // ARCH23b: allow ~3 CTA/SM grids (A100 108*3≈324 processors) under launch_bounds(.,3).
+  constexpr int PROCESSOR_STATE_SIZE = 11;
 #endif
 #else
-  constexpr int PROCESSOR_STATE_SIZE = 8; // 8 is recommended
+  constexpr int PROCESSOR_STATE_SIZE = 11; // ARCH23b: was 8; raise with occupancy
 #endif
   static_assert(PROCESSOR_STATE_SIZE <= 16);
   constexpr int MAX_PROCESSORS = WARP_SIZE * PROCESSOR_STATE_SIZE; // can be relaxed but with slower perf
