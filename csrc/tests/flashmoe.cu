@@ -867,7 +867,9 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{}, cute::Int<2>{}); // NCU10: deepen shared-A K pipeline
+    // ARCH23: shallower shared-A K pipe (pS0=1) cuts AB smem ~2x so bps can rise
+    // past the NCU-measured smem=2 / regs=2 occupancy ceiling. ≠ combine reshuffle.
+    launch(cute::Int<64>{}, cute::Int<1>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
   }
