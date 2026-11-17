@@ -316,10 +316,6 @@ void kickstart(const Options& opts) {
   nvshmem_init();
   const uint devId = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
   CHECK_CUDA(cudaSetDevice(devId));
-  // EPI24: 8-byte smem banks for bf16/fp16 epilogue+combine (cut 2-byte bank conflicts).
-  if constexpr (sizeof(Element) == 2) {
-    CHECK_CUDA(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
-  }
   cudaStream_t stream;
   CHECK_CUDA(cudaStreamCreate(&stream));
 
@@ -798,8 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI24: ARCH6 tip + eight-byte smem banks (host). bN1=64 abandoned (+9.2%).
-  // Not launch_bounds / shape-pS1 / PreferEqual / L2-nextK / PreferL1 / carveout / pS0=3.
+  // EPI25: ARCH6 tip + drop redundant fuse epilogue syncthreads (combine barriers).
+  // Revert EPI24 eight-byte banks (NO_KEEP +0.16%). Not PreferL1 / doorbell-skip / steal.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
