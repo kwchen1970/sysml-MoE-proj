@@ -46,14 +46,17 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    __shared__ TPS stIds[bM];
+    // HYB59: 16B-aligned + plain 8B ull TPS staging (no __ldg/__ldcs/__ldcg/unroll/Prefer*).
+    __shared__ __align__(16) TPS stIds[bM];
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
+    static_assert(sizeof(TPS) == sizeof(unsigned long long) && alignof(TPS) == alignof(unsigned long long));
     for (int i = threadIdx.x; i < bM; i += threads) {
-      stIds[i] = tokenIndices[i];
+      *reinterpret_cast<unsigned long long*>(stIds + i) =
+        *reinterpret_cast<const unsigned long long*>(tokenIndices + i);
     }
     if constexpr (!SkipGmemLoad) {
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
