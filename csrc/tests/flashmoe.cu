@@ -818,48 +818,56 @@ void drive(const int argc, char** argv) {
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C, auto pS0C) {
+  // ARCH28: launch(bN0, bK0, pS0). Shared-A uses shallower bK0=32 with pS0=2 to cut
+  // gated AB smem (~half vs bK64) for occupancy (NCU #1) without pS0=1 / sequential
+  // dual-accum split / AccessPolicy. GEMM1 keeps outer bK1. Two-pass unchanged.
+  auto launch = [&](auto bN0C, auto bK0C, auto pS0C) {
     constexpr int bN0 = decltype(bN0C)::value;
+    constexpr int bK0loc = decltype(bK0C)::value;
     constexpr int pS0 = decltype(pS0C)::value;
     constexpr int pS1 = pS; // GEMM1: keep gated default
-    if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
+    constexpr int bK1loc = bK1;
+    if (H <= bK0loc || H % bK0loc != 0) {
+      throw std::invalid_argument("H is invalid for bK0");
+    }
+    if (I <= bK1loc || I % bK1loc != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
     }
     switch (E) {
       case 8:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0loc, pS0, bN1, bK1loc, pS1, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0loc, pS0, bN1, bK1loc, pS1, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 8>(opts);
         }
         break;
       case 16:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0loc, pS0, bN1, bK1loc, pS1, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 16>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0loc, pS0, bN1, bK1loc, pS1, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 16>(opts);
         }
         break;
       case 32:
         if (k > 1) {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0loc, pS0, bN1, bK1loc, pS1, flashmoe::CombineMode::plural, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 32>(opts);
         } else {
-          kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+          kickstart<Element, AccumType, arch, bM, bN0, bK0loc, pS0, bN1, bK1loc, pS1, flashmoe::CombineMode::single, act, mt,
           flashmoe::GateReductionLevel::singleBlock, 32>(opts);
         }
         break;
       default:
         if (E % 32 == 0) {
           if (k > 1) {
-            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::plural, act, mt,
+            kickstart<Element, AccumType, arch, bM, bN0, bK0loc, pS0, bN1, bK1loc, pS1, flashmoe::CombineMode::plural, act, mt,
             flashmoe::GateReductionLevel::multiBlock, 32>(opts);
           } else {
-            kickstart<Element, AccumType, arch, bM, bN0, bK0, pS0, bN1, bK1, pS1, flashmoe::CombineMode::single, act, mt,
+            kickstart<Element, AccumType, arch, bM, bN0, bK0loc, pS0, bN1, bK1loc, pS1, flashmoe::CombineMode::single, act, mt,
             flashmoe::GateReductionLevel::multiBlock, 32>(opts);
           }
         }
@@ -867,9 +875,9 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{}, cute::Int<2>{}); // NCU10: deepen shared-A K pipeline
+    launch(cute::Int<64>{}, cute::Int<32>{}, cute::Int<2>{}); // ARCH28: shallower AB stages
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<bK0>{}, cute::Int<pS>{});
   }
 }
 
