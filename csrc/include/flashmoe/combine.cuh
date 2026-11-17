@@ -25,6 +25,8 @@ namespace flashmoe
 
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
+  // NCU34: SkipGmemLoad full-tile — each thread owns rows, hoist TPS, sweep columns
+  // (not ldg/fmul/fmaf/dual-ILP/SoA/hmul2).
   template <
     int bM,
     int bN,
@@ -153,7 +155,41 @@ namespace flashmoe
       constexpr auto redElemsPerThread = totalElems / threads;
       constexpr int packWidth = RVD::VectorWidth::value;
       if (tileSize == bM) {
-        for (int i = 0; i < redElemsPerThread; ++i) {
+        if constexpr (SkipGmemLoad) {
+          // NCU34: row-owned sweep — hoist TPS once per row, then walk contiguous cols.
+          for (int rowIdx = static_cast<int>(threadIdx.x); rowIdx < bM; rowIdx += threads) {
+            const auto indexAndScale = stIds[rowIdx];
+            const auto tokIdx = indexAndScale.tokenIdx;
+            const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+            const float p = indexAndScale.probability;
+#pragma unroll 4
+            for (int colIdx = 0; colIdx < rbN; ++colIdx) {
+              auto tokenValue = vsC(rowIdx, colIdx);
+              RVR scaledValue{};
+              if constexpr (RAD::Width::value == 2) {
+                constexpr Converter<float2, RAT> loadOp{};
+                constexpr Converter<RAT, float2> storeOp{};
+#pragma unroll
+                for (int j = 0; j < packWidth; ++j) {
+                  scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+                }
+              }
+              else {
+                using AccumType = cuda::std::common_type_t<float, RAT>;
+                constexpr Converter<AccumType, RAT> loadOp{};
+                constexpr Converter<RAT, AccumType> storeOp{};
+#pragma unroll
+                for (int j = 0; j < packWidth; ++j) {
+                  scaledValue[j] = storeOp(loadOp(tokenValue[j]) * p);
+                }
+              }
+              auto* __restrict__ tCp = (&tC(tokIdx, colIdx * packWidth));
+              constexpr RedAddOp op{};
+              op(tCp, scaledValue);
+            }
+          }
+        }
+        else for (int i = 0; i < redElemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;
