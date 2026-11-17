@@ -24,12 +24,15 @@ namespace flashmoe::processor
 {
   // fused GEMM, epilogue and data transfer
   // ARCH6: WriteGmem=false keeps the C tile in workspace smem for fused combine (no staging store).
+  // ARCH17: FuseCombineIds stages routing TPS into the workspace tail before the densify
+  // publish barrier (no pre-GEMM static __shared__, no PreferL1 / steal / doorbell skip).
   template <
     typename TileGEMM,
     typename Activation,
     typename Element,
     typename ElementC,
-    bool WriteGmem = true
+    bool WriteGmem = true,
+    bool FuseCombineIds = false
   >
   __forceinline__ __device__
   void fGET(void* __restrict__ const& workspace,
@@ -37,7 +40,8 @@ namespace flashmoe::processor
             const Element* __restrict__ const& b,
             ElementC* __restrict__ const& c,
             const ElementC* __restrict__ const& bias,
-            const int& M, const int& N, const int& K, const int& tileIdx) {
+            const int& M, const int& N, const int& K, const int& tileIdx,
+            const TPS* __restrict__ const tokenIds = nullptr) {
     using BLAS = TileGEMM::BLAS;
     auto accumulator = BLAS::suggest_accumulator();
     using BM = cute::Int<cublasdx::size_of<BLAS>::m>;
@@ -67,9 +71,23 @@ namespace flashmoe::processor
       auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
       __syncthreads();
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
+      if constexpr (FuseCombineIds) {
+        // Workspace tail after dense C: publish C+ids with one barrier (vs ARCH6's
+        // densify sync + combine stIds reload sync; vs ARCH10's pre-GEMM static smem).
+        static_assert(sizeof(TPS) == sizeof(unsigned long long) &&
+                      alignof(TPS) == alignof(unsigned long long));
+        constexpr size_t idOff = cutlass::round_up(sizeof(ElementC) * BM{} * BN{}, alignof(TPS));
+        auto* __restrict__ idDst = reinterpret_cast<unsigned long long*>(
+          reinterpret_cast<char*>(workspace) + idOff);
+        const auto* __restrict__ idSrc = reinterpret_cast<const unsigned long long*>(tokenIds);
+        for (int i = static_cast<int>(threadIdx.x); i < BM{}; i += static_cast<int>(blockDim.x)) {
+          idDst[i] = idSrc[i];
+        }
+      }
       __syncthreads();
     }
     else {
+      static_assert(!FuseCombineIds, "FuseCombineIds requires WriteGmem=false");
       auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
       auto sC = cublasdx::make_tensor(static_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
       __syncthreads();
@@ -380,15 +398,18 @@ namespace flashmoe::processor
           const auto mCoord = task.tileIdx / tilesN1;
           const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
-            // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
-            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
-              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
+            // ARCH17: smem-resident C (ARCH6) + workspace-tail TPS published by densify barrier.
+            // combine SkipGmemLoad+IdsReady skips static stIds + second CTA barrier.
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
+            fGET<TileGEMM1, cublasdx::identity, Element, Element, false, true>(
+              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx, tokenIds);
+            constexpr size_t idOff = cutlass::round_up(sizeof(Element) * bM * bN, alignof(TPS));
+            const auto* __restrict__ fuseIds = reinterpret_cast<const TPS*>(
+              reinterpret_cast<const char*>(workspace) + idOff);
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
+            combine<bM, bN, Arch, threads, combineMode, true, true>(S, H, workspace, fuseIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
             if (!threadIdx.x) {
               const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);

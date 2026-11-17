@@ -87,12 +87,15 @@ namespace flashmoe::moe
       ? sizeof(Element) * bM * bN0 : 0;
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
       + gateCacheBytes, MAX_ALIGNMENT);
+    // ARCH17: dense C + workspace-tail TPS (routing ids) for fused densify publish.
+    constexpr auto fuseCIds = cutlass::round_up(sizeof(Element) * bM * bN1, alignof(TPS))
+      + sizeof(TPS) * bM;
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
-      sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
+      fuseCIds), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
     const auto OSSz = os::getSharedSize<threads, bM>(world, numLocalExperts, E, EC, tilesN1);
     const auto taskSz = sizeof(Task) * tilesN1;
-    constexpr auto combineSz = cutlass::round_up(sizeof(Element) * bM * bN1, MAX_ALIGNMENT);
+    constexpr auto combineSz = cutlass::round_up(fuseCIds, MAX_ALIGNMENT);
     return cute::max(GEMM0Sz, GEMM1Sz, dispatchSz, OSSz, taskSz, combineSz);
   }
 
