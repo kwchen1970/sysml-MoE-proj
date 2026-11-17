@@ -24,20 +24,23 @@ namespace flashmoe
   }
 
   // ARCH16: native half2/bf162 scale for fused combine RedAdd (skip float2 round-trip).
-  template <typename RAT>
+  // PairT is often RawType<__half2|/__nv_bfloat162> from vector smem loads.
+  template <typename PairT>
   __device__ __forceinline__
-  RAT nativePairScale(const RAT& v, const float& p) {
-    if constexpr (cuda::std::is_same_v<RAT, __half2>) {
-      return __hmul2(v, __float2half2_rn(p));
+  PairT nativePairScale(const PairT& v, const float& p) {
+    if constexpr (cuda::std::is_same_v<PairT, __half2> ||
+                  cuda::std::is_same_v<PairT, __half2_raw>) {
+      const auto hv = static_cast<__half2>(v);
+      return static_cast<PairT>(__hmul2(hv, __float2half2_rn(p)));
     }
-    else if constexpr (cuda::std::is_same_v<RAT, __nv_bfloat162>) {
-      return __hmul2(v, __float2bfloat162_rn(p));
+    else if constexpr (cuda::std::is_same_v<PairT, __nv_bfloat162> ||
+                       cuda::std::is_same_v<PairT, __nv_bfloat162_raw>) {
+      const auto bv = static_cast<__nv_bfloat162>(v);
+      return static_cast<PairT>(__hmul2(bv, __float2bfloat162_rn(p)));
     }
     else {
-      constexpr Converter<float2, RAT> loadOp{};
-      constexpr Converter<RAT, float2> storeOp{};
-      const auto scale2 = float2{p, p};
-      return storeOp(float2Mul(loadOp(v), scale2));
+      static_assert(sizeof(PairT) == 0, "nativePairScale expects half2/bf162 (or raw)");
+      return v;
     }
   }
 
