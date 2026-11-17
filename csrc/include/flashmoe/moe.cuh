@@ -173,8 +173,8 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI33: softer occupancy — launch_bounds(.,2) not 3 (EPI32b mid IMA). Keep pS0=1 + schedCap.
-  __launch_bounds__(Config::Threads::value, 2)
+  // EPI34: restore bounds=1 (abandon bounds+pS0=1). Keep MAX_PROCESSORS schedCap.
+  __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;

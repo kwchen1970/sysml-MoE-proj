@@ -794,9 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI33: pS0=1 + launch_bounds(.,2) + MAX_PROCESSORS schedCap (EPI32b mid IMA under bounds 3).
-  // Abandon PreferSharedMemoryCarveout (EPI31 +40%). No PreferL1.
-  // Not PreferL1 / pad amp / pS1@E16 / doorbell / steal.
+  // EPI34: deeper shared-A async pS0=3 (weight reuse / L1TEX). Abandon bounds+pS0=1 (EPI32–33 mid IMA).
+  // Keep MAX_PROCESSORS schedCap. No PreferL1 / carveout / pad / doorbell / steal.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -867,8 +866,8 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI32: shallower GEMM0 stages (pS0=1) cuts ABGated smem vs ARCH6 pS0=2.
-    launch(cute::Int<64>{}, cute::Int<1>{}, cute::Int<pS>{});
+    // EPI34: deeper GEMM0 async stages (pS0=3) vs ARCH6 pS0=2 — weight-stationary reuse.
+    launch(cute::Int<64>{}, cute::Int<3>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
   }
