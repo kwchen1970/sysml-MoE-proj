@@ -51,14 +51,19 @@ FLASHMOE_HD void chooseHotExperts(const unsigned* hist, unsigned nExperts,
   if (hot0 == kNoExpert) {
     return;
   }
+  // HYB66: restore sticky1 partner retention (was voided). Prefer sticky1 as
+  // hot1 when sticky0 remains primary; never displace sticky0-as-partner.
+  const bool sticky1Alive =
+    sticky1 != kNoExpert && sticky1 < nExperts && hist[sticky1] > 0 && sticky1 != hot0;
   if (stickyAlive && sticky0 != hot0) {
     hot1 = sticky0;
+  } else if (sticky1Alive) {
+    hot1 = sticky1;
   } else if (best != kNoExpert && best != hot0) {
     hot1 = best;
   } else if (second != kNoExpert && second != hot0) {
     hot1 = second;
   }
-  (void)sticky1;
 }
 
 FLASHMOE_HD bool isHotExpert(unsigned expert, unsigned hot0, unsigned hot1) {

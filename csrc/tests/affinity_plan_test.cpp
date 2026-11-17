@@ -39,6 +39,7 @@ static void testStickyAndLongPole() {
 
   chooseHotExperts(hist, 8, 0, 1, hot0, hot1);
   expect(hot0 == 0, "equal work does not bounce off the sticky expert");
+  expect(hot1 == 1, "HYB66: sticky1 stays partner while sticky0 remains primary");
 
   hist[3] = 11;
   chooseHotExperts(hist, 8, 0, 1, hot0, hot1);
