@@ -388,7 +388,7 @@ namespace flashmoe::processor
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
-            __shared__ TPS fuseStIds[bM];
+            __shared__ flashmoe::TPS fuseStIds[bM];
             for (int i = threadIdx.x; i < bM; i += threads) {
               fuseStIds[i] = tokenIds[i];
             }
