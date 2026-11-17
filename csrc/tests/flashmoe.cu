@@ -794,8 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI32: shrink CTA footprint for occupancy (ARCH6 NCU: 12.5% occ, smem+regs cap 2 blk/SM).
-  // Shallower shared-A pS0=1 + launch_bounds(.,3). Abandon PreferSharedMemoryCarveout (EPI31 +40%).
+  // EPI32b: shallower shared-A pS0=1 + launch_bounds(.,3) + MAX_PROCESSORS grid cap.
+  // EPI32 smoke: mid hit processor count 323 (3*108) > 256. Abandon PreferSharedMemoryCarveout.
   // Not PreferL1 / pad amp / pS1@E16 / doorbell / steal.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :

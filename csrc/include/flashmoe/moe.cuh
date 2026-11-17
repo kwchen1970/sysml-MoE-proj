@@ -102,7 +102,10 @@ namespace flashmoe::moe
     const uint& k, const int& blocksPerSM, const int& numSMs) {
     const auto processorBlocks = cute::ceil_div(S * k, bM) * ((I / bN0) + (H / bN1));
     const auto dispatchBlocks = cute::min(dispatchSuperBlockSize(E) * E, MAX_DISPATCH_BLOCKS);
-    return cute::max(cute::min(cute::max(processorBlocks, dispatchBlocks) + 1, blocksPerSM * numSMs), 2);
+    // EPI32: occupancy>2 can exceed scheduler::MAX_PROCESSORS (256 @ PSS=8). Cap grid.
+    const auto hwCap = blocksPerSM * numSMs;
+    const auto schedCap = scheduler::MAX_PROCESSORS + 1; // processors = blocks-1
+    return cute::max(cute::min(cute::max(processorBlocks, dispatchBlocks) + 1, cute::min(hwCap, schedCap)), 2);
   }
   struct KernelArgs {
     __host__ __forceinline__
