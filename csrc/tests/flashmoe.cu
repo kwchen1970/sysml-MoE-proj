@@ -867,8 +867,8 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // ARCH23: shallower shared-A K pipe (pS0=1) cuts AB smem ~2x so bps can rise
-    // past the NCU-measured smem=2 / regs=2 occupancy ceiling. ≠ combine reshuffle.
+    // ARCH24: shallower shared-A K pipe (pS0=1) cuts AB smem; no launch_bounds minBlocks
+    // (EPI32b/33 OOB under bounds 2/3). schedCap kept. NCU #1 footprint via smem only.
     launch(cute::Int<64>{}, cute::Int<1>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});

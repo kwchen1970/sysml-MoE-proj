@@ -173,9 +173,9 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // ARCH23c: soft occupancy — bounds(.,2) after EPI32b/ARCH23b illegalAddress under bounds(.,3).
-  // Keep shared-A pS0=1 (smem footprint) + schedCap. Targets NCU #1 without OOB.
-  __launch_bounds__(Config::Threads::value, 2)
+  // ARCH24: no minBlocks launch_bounds (EPI32b/33 illegalAddress under bounds 3/2 + pS0=1).
+  // Keep shared-A pS0=1 smem cut + schedCap for NCU #1 footprint without reg forcing.
+  __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
