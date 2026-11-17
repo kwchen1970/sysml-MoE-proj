@@ -173,9 +173,9 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // ARCH23: raise min CTAs/SM (regs) — NCU ARCH6 mid: occ 12.5%, regs+smem cap at 2.
-  // Pair with shallower shared-A pS0 to also cut smem footprint (limiter #1).
-  __launch_bounds__(Config::Threads::value, 3)
+  // ARCH23c: soft occupancy — bounds(.,2) after EPI32b/ARCH23b illegalAddress under bounds(.,3).
+  // Keep shared-A pS0=1 (smem footprint) + schedCap. Targets NCU #1 without OOB.
+  __launch_bounds__(Config::Threads::value, 2)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
