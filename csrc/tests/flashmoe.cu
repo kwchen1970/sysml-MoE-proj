@@ -794,7 +794,7 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI26: ARCH6 tip + spend GEMM1 smem (pS1=2) only when E==16 on shared-A.
+  // EPI27: rematch EPI26 tip (shared-A pS1=2 @ E==16) with higher-ROUNDS A/B to clear near-noise.
   // Revert EPI25 sync-drop (NO_KEEP +4.1%). Narrower than EPI21 (E<=64&&S>=4096 MARGINAL).
   // Not PreferL1 / doorbell-skip / steal / another syncthreads trim.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
@@ -867,7 +867,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI26: deepen GEMM1 only for E==16 (EPI21's −19.6% mid); skip E=8/32/128.
+    // EPI27: deepen GEMM1 only for E==16 (EPI21's −19.6% mid); skip E=8/32/128.
     if (E == 16) {
       launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<2>{});
     } else {
