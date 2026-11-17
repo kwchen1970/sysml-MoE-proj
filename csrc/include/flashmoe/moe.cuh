@@ -170,7 +170,9 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  __launch_bounds__(Config::Threads::value, 1)
+  // NCU36: raise min CTAs/SM (regs) — NCU ARCH6 mid: occ 12.5%, regs+smem cap at 2.
+  // Pair with shallower shared-A pS0 to also cut smem footprint (limiter #1).
+  __launch_bounds__(Config::Threads::value, 3)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
