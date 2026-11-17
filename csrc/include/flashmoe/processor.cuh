@@ -355,6 +355,23 @@ namespace flashmoe::processor
           }
           __syncthreads();
           if (enqueue) {
+            // ARCH25: L2-prefetch this expert's Down weights while enqueuing GEMM1
+            // (weight-stationary handoff). Targets NCU #2/#3 L1TEX/weight reuse.
+            // ≠ pS0 extremes, ≠ launch_bounds minBlocks, ≠ combine reshuffle.
+            {
+              const auto* __restrict__ downP =
+                expertDownWeights + expertWeightSize * task.localExpertIdx();
+              constexpr size_t kPrefetchBytes = 64 * 1024;
+              constexpr int lineElems = static_cast<int>(128 / sizeof(Element));
+              const size_t prefElems =
+                expertWeightSize < (kPrefetchBytes / sizeof(Element))
+                  ? expertWeightSize
+                  : (kPrefetchBytes / sizeof(Element));
+              for (size_t i = static_cast<size_t>(threadIdx.x) * lineElems; i < prefElems;
+                   i += static_cast<size_t>(threads) * lineElems) {
+                asm volatile("prefetch.global.L2 [%0];" ::"l"(downP + i) : "memory");
+              }
+            }
             const auto offset = tilesN1 * (task.tileIdx / tilesN0);
             auto* __restrict__ tQ = pA.ptQ + (task.syncIdx * tilesN1);
             if (topo == Topology::MIXED && task.isPeerRemote()) {
