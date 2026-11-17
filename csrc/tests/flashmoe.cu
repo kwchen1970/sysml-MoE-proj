@@ -794,8 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI21: ARCH6 tip + shared-A GEMM1 pS1=2 only when E<=64 AND S>=4096.
-  // Narrows EPI16 (E<=64 only, MARGINAL −0.92%) by skipping S=1024. PreferEqual abandoned (HYB54 dead).
+  // EPI22: ARCH6 tip + megakernel __launch_bounds__(threads, 2).
+  // Orthogonal to exhausted: shape-aware pS1=2 / PreferEqual / L2-nextK / PreferL1 / carveout / pS0=3.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -866,12 +866,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI21: deepen GEMM1 only on large-S + small-E shared-A (≠ EPI16 which also hit S=1024).
-    if (E <= 64 && S >= 4096) {
-      launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<2>{});
-    } else {
-      launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
-    }
+    launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
   }

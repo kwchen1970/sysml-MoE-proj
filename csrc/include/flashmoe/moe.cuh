@@ -170,7 +170,8 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  __launch_bounds__(Config::Threads::value, 1)
+  // EPI22: hint dual CTA/SM to cut register pressure vs default minBlocks=1.
+  __launch_bounds__(Config::Threads::value, 2)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
