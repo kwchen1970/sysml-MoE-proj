@@ -46,16 +46,19 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    // HYB60: with SkipGmemLoad, fGET omits its trailing barrier — this syncthreads
-    // publishes both workspace sC and stIds (TPS staging can overlap copy_fragment).
-    __shared__ TPS stIds[bM];
+    // HYB65: HYB60 fuse overlap (publish sC+stIds in one sync) + HYB59-style 8B ull
+    // TPS staging into 128B-aligned smem — faster/conflict-lighter staging during the
+    // TPS∥copy window (E=8 LOO killer). Not barrier gates / serialize / gmem-TPS.
+    __shared__ __align__(128) TPS stIds[bM];
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
+    static_assert(sizeof(TPS) == sizeof(unsigned long long) && alignof(TPS) == alignof(unsigned long long));
     for (int i = threadIdx.x; i < bM; i += threads) {
-      stIds[i] = tokenIndices[i];
+      *reinterpret_cast<unsigned long long*>(stIds + i) =
+        *reinterpret_cast<const unsigned long long*>(tokenIndices + i);
     }
     if constexpr (!SkipGmemLoad) {
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);

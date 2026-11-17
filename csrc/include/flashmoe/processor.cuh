@@ -62,8 +62,8 @@ namespace flashmoe::processor
       d_frag(i) = storeConv(act(c_frag(i) + loadConv(d_frag(i))));
     });
     // rmem -> smem (combine-compatible dense row-major when !WriteGmem)
-    // HYB60: omit trailing syncthreads — fused combine stages TPS then syncs once,
-    // which publishes both sC and stIds. Cuts one CTA barrier on the ARCH6 fuse path.
+    // HYB60/65: omit trailing syncthreads — combine publishes sC+stIds once.
+    // HYB65 pairs this with 128B-aligned ull TPS staging (not E-gate/serialize/gmem-TPS).
     if constexpr (!WriteGmem) {
       using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BN, cute::_1>>;
       auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
@@ -382,7 +382,7 @@ namespace flashmoe::processor
           const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
             // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
+            // HYB65: HYB60 overlap + aligned ull TPS staging in combine.
             fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
               workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
