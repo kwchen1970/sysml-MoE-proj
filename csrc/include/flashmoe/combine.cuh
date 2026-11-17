@@ -46,18 +46,24 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    // HYB60: with SkipGmemLoad, fGET omits its trailing barrier — this syncthreads
-    // publishes both workspace sC and stIds (TPS staging can overlap copy_fragment).
-    __shared__ TPS stIds[bM];
+    // HYB64: SkipGmemLoad fuse path skips stIds smem — read TPS from gmem during
+    // scatter. Keeps HYB60's single publish barrier for sC without TPS∥copy smem
+    // conflict (not HYB61 serialize / HYB62 E-gate / HYB63 fulltile).
+    const TPS* __restrict__ stIds;
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
-    for (int i = threadIdx.x; i < bM; i += threads) {
-      stIds[i] = tokenIndices[i];
+    if constexpr (SkipGmemLoad) {
+      stIds = tokenIndices;
     }
-    if constexpr (!SkipGmemLoad) {
+    else {
+      __shared__ TPS stIdsLocal[bM];
+      stIds = stIdsLocal;
+      for (int i = threadIdx.x; i < bM; i += threads) {
+        stIdsLocal[i] = tokenIndices[i];
+      }
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
       static_assert(cute::is_compatible<decltype(gC.layout()), decltype(sC.layout())>::value);
       // copy processed tile from gmem -> smem
