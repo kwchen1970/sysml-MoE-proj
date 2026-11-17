@@ -355,6 +355,27 @@ namespace flashmoe::processor
           }
           __syncthreads();
           if (enqueue) {
+            // NCU38: L2-prefetch this expert's Down weights while enqueuing GEMM1
+            // (async handoff latency). Keeps ARCH6 dual-hot affinity — ≠ NCU37
+            // single-hot rematch, ≠ PreferL1 / pS0=1 / unfuse / next-K mainloop.
+            {
+              const auto* __restrict__ downP =
+                expertDownWeights + expertWeightSize * task.localExpertIdx();
+              constexpr size_t kPrefetchBytes = 256 * 1024;
+              constexpr int lineElems = static_cast<int>(128 / sizeof(Element));
+              const size_t prefElems =
+                expertWeightSize < (kPrefetchBytes / sizeof(Element))
+                  ? expertWeightSize
+                  : (kPrefetchBytes / sizeof(Element));
+              for (size_t i = static_cast<size_t>(threadIdx.x) * lineElems; i < prefElems;
+                   i += static_cast<size_t>(threads) * lineElems) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+                asm volatile("prefetch.global.L2 [%0];" ::"l"(downP + i) : "memory");
+#else
+                (void)(downP + i);
+#endif
+              }
+            }
             const auto offset = tilesN1 * (task.tileIdx / tilesN0);
             auto* __restrict__ tQ = pA.ptQ + (task.syncIdx * tilesN1);
             if (topo == Topology::MIXED && task.isPeerRemote()) {
