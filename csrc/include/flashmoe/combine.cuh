@@ -25,6 +25,7 @@ namespace flashmoe
 
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
+  // NCU31: SkipGmemLoad full-tile dual-issue ILP (two scale+RedAdd in flight; not fmul/fmaf/hmul2).
   template <
     int bM,
     int bN,
@@ -153,7 +154,81 @@ namespace flashmoe
       constexpr auto redElemsPerThread = totalElems / threads;
       constexpr int packWidth = RVD::VectorWidth::value;
       if (tileSize == bM) {
-        for (int i = 0; i < redElemsPerThread; ++i) {
+        if constexpr (SkipGmemLoad && redElemsPerThread >= 2) {
+          // NCU31: dual-issue ILP — overlap two independent scale+atomic RedAdds.
+          constexpr int paired = (redElemsPerThread / 2) * 2;
+          for (int i = 0; i < paired; i += 2) {
+            const auto idx0 = threadIdx.x + i * threads;
+            const auto idx1 = threadIdx.x + (i + 1) * threads;
+            const auto row0 = idx0 / rbN;
+            const auto col0 = idx0 % rbN;
+            const auto row1 = idx1 / rbN;
+            const auto col1 = idx1 % rbN;
+            const auto tps0 = stIds[row0];
+            const auto tps1 = stIds[row1];
+            auto tv0 = vsC(row0, col0);
+            auto tv1 = vsC(row1, col1);
+            RVR scaled0{};
+            RVR scaled1{};
+            if constexpr (RAD::Width::value == 2) {
+              constexpr Converter<float2, RAT> loadOp{};
+              constexpr Converter<RAT, float2> storeOp{};
+              const auto s0 = float2{tps0.probability, tps0.probability};
+              const auto s1 = float2{tps1.probability, tps1.probability};
+#pragma unroll
+              for (int j = 0; j < packWidth; ++j) {
+                scaled0[j] = storeOp(float2Mul(loadOp(tv0[j]), s0));
+                scaled1[j] = storeOp(float2Mul(loadOp(tv1[j]), s1));
+              }
+            }
+            else {
+              using AccumType = cuda::std::common_type_t<float, RAT>;
+              constexpr Converter<AccumType, RAT> loadOp{};
+              constexpr Converter<RAT, AccumType> storeOp{};
+#pragma unroll
+              for (int j = 0; j < packWidth; ++j) {
+                scaled0[j] = storeOp(loadOp(tv0[j]) * tps0.probability);
+                scaled1[j] = storeOp(loadOp(tv1[j]) * tps1.probability);
+              }
+            }
+            auto* __restrict__ p0 = (&tC(tps0.tokenIdx, col0 * packWidth));
+            auto* __restrict__ p1 = (&tC(tps1.tokenIdx, col1 * packWidth));
+            constexpr RedAddOp op{};
+            op(p0, scaled0);
+            op(p1, scaled1);
+          }
+          if constexpr (redElemsPerThread != paired) {
+            const auto idx = threadIdx.x + paired * threads;
+            const auto rowIdx = idx / rbN;
+            const auto colIdx = idx % rbN;
+            const auto indexAndScale = stIds[rowIdx];
+            auto tokenValue = vsC(rowIdx, colIdx);
+            RVR scaledValue{};
+            const auto tokIdx = indexAndScale.tokenIdx;
+            if constexpr (RAD::Width::value == 2) {
+              constexpr Converter<float2, RAT> loadOp{};
+              constexpr Converter<RAT, float2> storeOp{};
+              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+#pragma unroll
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+              }
+            }
+            else {
+              using AccumType = cuda::std::common_type_t<float, RAT>;
+              constexpr Converter<AccumType, RAT> loadOp{};
+              constexpr Converter<RAT, AccumType> storeOp{};
+#pragma unroll
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
+              }
+            }
+            auto* __restrict__ tCp = (&tC(tokIdx, colIdx * packWidth));
+            constexpr RedAddOp op{};
+            op(tCp, scaledValue);
+          }
+        }
+        else for (int i = 0; i < redElemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;
