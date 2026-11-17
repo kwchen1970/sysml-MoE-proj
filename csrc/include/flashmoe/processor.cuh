@@ -62,8 +62,8 @@ namespace flashmoe::processor
       d_frag(i) = storeConv(act(c_frag(i) + loadConv(d_frag(i))));
     });
     // rmem -> smem (combine-compatible dense row-major when !WriteGmem)
-    // HYB60: omit trailing syncthreads — fused combine stages TPS then syncs once,
-    // which publishes both sC and stIds. Cuts one CTA barrier on the ARCH6 fuse path.
+    // HYB60/62: omit trailing syncthreads — fuse path publishes sC later (combine sync,
+    // or an E<=8 gate sync in processor). Cuts one CTA barrier vs ARCH6 when E>8.
     if constexpr (!WriteGmem) {
       using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BN, cute::_1>>;
       auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
@@ -266,7 +266,7 @@ namespace flashmoe::processor
              Element* __restrict__ const& moeOutput,
              const PBM& producerBitMap,
              BitSet* __restrict__ const& consumerCombineBitMap, // ARCH5 sense flips
-             const uint& /*E*/,
+             const uint& E,
              const uint& ecTilesM,
              const uint8_t& stateNumber,
              const Heap& symHeap, const ProcessorArgs& pA) {
@@ -382,9 +382,15 @@ namespace flashmoe::processor
           const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
             // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
+            // HYB60: fGET omits trailing sync so combine TPS can overlap copy_fragment.
+            // HYB62: for E<=8, insert a publish barrier before combine (no TPS∥copy) — that
+            // shape was HYB60's LOO killer (+15%). E>8 keeps the overlapping collapse.
+            // Not PreferL1 / doorbell-skip / work-steal; not HYB61 serialize-before-copy.
             fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
               workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
+            if (E <= 8u) {
+              __syncthreads();
+            }
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);

@@ -46,8 +46,8 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    // HYB60: with SkipGmemLoad, fGET omits its trailing barrier — this syncthreads
-    // publishes both workspace sC and stIds (TPS staging can overlap copy_fragment).
+    // HYB60/62: with SkipGmemLoad, fGET omits trailing barrier; this syncthreads
+    // publishes sC+stIds. HYB62 may pre-sync for E<=8 so TPS does not overlap copy.
     __shared__ TPS stIds[bM];
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
