@@ -25,6 +25,7 @@ namespace flashmoe
 
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
+  // ARCH19: PreScaled=true → smem already has routing scale (epilogue-fused); RedAdd without converts.
   template <
     int bM,
     int bN,
@@ -32,6 +33,7 @@ namespace flashmoe
     int threads,
     CombineMode c,
     bool SkipGmemLoad = false,
+    bool PreScaled = false,
     cublasdx::arrangement cArr = cublasdx::row_major,
     typename Element,
     typename TileCoord
@@ -161,7 +163,14 @@ namespace flashmoe
           auto tokenValue = vsC(rowIdx, colIdx);
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
-          if constexpr (RAD::Width::value == 2) {
+          if constexpr (PreScaled) {
+            static_assert(SkipGmemLoad);
+            static_assert(sizeof(RV) == sizeof(RVR));
+            for (int j = 0; j < packWidth; ++j) {
+              scaledValue[j] = *reinterpret_cast<const RAT*>(&tokenValue[j]);
+            }
+          }
+          else if constexpr (RAD::Width::value == 2) {
             constexpr Converter<float2, RAT> loadOp{};
             constexpr Converter<RAT, float2> storeOp{};
             // fp16x2 or bf16x2
@@ -199,7 +208,14 @@ namespace flashmoe
             auto tokenValue = vsC(rowIdx, colIdx);
             RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
-            if constexpr (RAD::Width::value == 2) {
+            if constexpr (PreScaled) {
+              static_assert(SkipGmemLoad);
+              static_assert(sizeof(RV) == sizeof(RVR));
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = *reinterpret_cast<const RAT*>(&tokenValue[j]);
+              }
+            }
+            else if constexpr (RAD::Width::value == 2) {
               constexpr Converter<float2, RAT> loadOp{};
               constexpr Converter<RAT, float2> storeOp{};
               // fp16x2 or bf16x2
@@ -235,7 +251,14 @@ namespace flashmoe
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
           if (idx < actualElems) {
-            if constexpr (RAD::Width::value == 2) {
+            if constexpr (PreScaled) {
+              static_assert(SkipGmemLoad);
+              static_assert(sizeof(RV) == sizeof(RVR));
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = *reinterpret_cast<const RAT*>(&tokenValue[j]);
+              }
+            }
+            else if constexpr (RAD::Width::value == 2) {
               constexpr Converter<float2, RAT> loadOp{};
               constexpr Converter<RAT, float2> storeOp{};
               // fp16x2 or bf16x2

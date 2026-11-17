@@ -24,12 +24,15 @@ namespace flashmoe::processor
 {
   // fused GEMM, epilogue and data transfer
   // ARCH6: WriteGmem=false keeps the C tile in workspace smem for fused combine (no staging store).
+  // ARCH19: EpilogueScale applies routing probability in-register (via map_fragment_index)
+  // before densify so combine can RedAdd scale-free — keeps densify (ARCH18 lose), ≠ ARCH16 hmul2.
   template <
     typename TileGEMM,
     typename Activation,
     typename Element,
     typename ElementC,
-    bool WriteGmem = true
+    bool WriteGmem = true,
+    bool EpilogueScale = false
   >
   __forceinline__ __device__
   void fGET(void* __restrict__ const& workspace,
@@ -37,7 +40,9 @@ namespace flashmoe::processor
             const Element* __restrict__ const& b,
             ElementC* __restrict__ const& c,
             const ElementC* __restrict__ const& bias,
-            const int& M, const int& N, const int& K, const int& tileIdx) {
+            const int& M, const int& N, const int& K, const int& tileIdx,
+            const TPS* __restrict__ const tokenIds = nullptr,
+            const uint tileSize = 0) {
     using BLAS = TileGEMM::BLAS;
     auto accumulator = BLAS::suggest_accumulator();
     using BM = cute::Int<cublasdx::size_of<BLAS>::m>;
@@ -66,10 +71,36 @@ namespace flashmoe::processor
       using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BN, cute::_1>>;
       auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
       __syncthreads();
+      if constexpr (EpilogueScale) {
+        // ARCH19: scale epilogue registers before densify (not ARCH8 in-smem pass / ARCH18 skip densify).
+        __shared__ TPS stIds[BM{}];
+        for (int i = static_cast<int>(threadIdx.x); i < BM{}; i += static_cast<int>(blockDim.x)) {
+          stIds[i] = tokenIds[i];
+        }
+        __syncthreads();
+        using AccumType = float;
+        constexpr Converter<AccumType, ElementC> toF{};
+        constexpr Converter<ElementC, AccumType> fromF{};
+        if (accumulator.is_thread_active()) {
+          cute::for_each(cute::make_identity_tensor(cute::shape(d_frag)), [&](auto idx) {
+            if constexpr (decltype(accumulator.is_predicated())::value) {
+              if (!accumulator.is_index_in_bounds(idx)) {
+                return;
+              }
+            }
+            const auto mn = accumulator.map_fragment_index(idx);
+            const int row = static_cast<int>(cute::get<0>(mn));
+            if (row < static_cast<int>(tileSize)) {
+              d_frag(idx) = fromF(toF(d_frag(idx)) * stIds[row].probability);
+            }
+          });
+        }
+      }
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
       __syncthreads();
     }
     else {
+      static_assert(!EpilogueScale, "EpilogueScale requires WriteGmem=false");
       auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
       auto sC = cublasdx::make_tensor(static_cast<ElementC*>(workspace), BLAS::suggest_layout_smem_c());
       __syncthreads();
@@ -380,15 +411,15 @@ namespace flashmoe::processor
           const auto mCoord = task.tileIdx / tilesN1;
           const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
-            // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
-            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
-              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
+            // ARCH19: epilogue-fused routing scale then densify; combine PreScaled RedAdd.
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
+            fGET<TileGEMM1, cublasdx::identity, Element, Element, false, true>(
+              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx,
+              tokenIds, task.tileSize());
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
+            combine<bM, bN, Arch, threads, combineMode, true, true>(S, H, workspace, tokenIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
             if (!threadIdx.x) {
               const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
