@@ -47,8 +47,8 @@ namespace flashmoe
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
     __shared__ TPS stIds[bM];
-    // EPI28: fused SkipGmemLoad path pads C rows (bN+8) to break 256B bank conflicts.
-    constexpr int bNSmem = SkipGmemLoad ? (bN + 8) : bN;
+    // EPI29: fused SkipGmemLoad path pads C rows (bN+16) to break 256B bank conflicts.
+    constexpr int bNSmem = SkipGmemLoad ? (bN + 16) : bN;
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bNSmem>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;

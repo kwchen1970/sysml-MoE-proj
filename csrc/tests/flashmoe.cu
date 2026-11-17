@@ -377,9 +377,9 @@ void kickstart(const Options& opts) {
     ? sizeof(Element) * bM * bN0 : 0;
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
     + gateCacheBytes, flashmoe::MAX_ALIGNMENT);
-  // EPI28: pad fused C by +8 cols for bank-conflict-free row stride (bN=128 → 256B≡0 banks).
+  // EPI29: pad fused C by +16 cols for bank-conflict-free row stride (amplify EPI28 +8).
   constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
-    sizeof(Element) * bM * (bN1 + 8)), flashmoe::MAX_ALIGNMENT);
+    sizeof(Element) * bM * (bN1 + 16)), flashmoe::MAX_ALIGNMENT);
 
   const auto kernelSz = flashmoe::moe::kernelSMEM<Config>(opts.E, opts.EC, world, numLocalExperts, tilesN1);
   int maxSharedMemory = 0;
@@ -795,8 +795,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI28: ARCH6 tip + bank-conflict-free padded fused C (stride bN+8).
-  // Abandon pS1=2@E==16 (EPI26/27 MARGINAL, rematch collapsed). Not PreferL1 / doorbell / steal.
+  // EPI29: ARCH6 tip + bank-conflict-free padded fused C (stride bN+16).
+  // Amplify EPI28 bank-pad +8→+16 to clear auto-margin. Not PreferL1 / doorbell / steal.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;

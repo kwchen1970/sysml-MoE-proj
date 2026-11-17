@@ -62,9 +62,9 @@ namespace flashmoe::processor
       d_frag(i) = storeConv(act(c_frag(i) + loadConv(d_frag(i))));
     });
     // rmem -> smem (combine-compatible dense row-major when !WriteGmem)
-    // EPI28: stride bN+8 pads rows past 256B bank conflicts (bN=128 × 2B).
+    // EPI29: stride bN+16 pads rows past 256B bank conflicts (bN=128 × 2B).
     if constexpr (!WriteGmem) {
-      constexpr int bNPad = BN{} + 8;
+      constexpr int bNPad = BN{} + 16;
       using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<cute::Int<bNPad>, cute::_1>>;
       auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
       __syncthreads();
