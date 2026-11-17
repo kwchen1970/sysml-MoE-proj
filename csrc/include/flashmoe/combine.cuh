@@ -23,21 +23,22 @@ namespace flashmoe
 #endif
   }
 
-  // NCU29: arith-roof — force FP32 FMA pipe for routing scale (sm80 has no __fmul2_rn).
+  // NCU30: keep arith-roof direction, but clear NCU29 LOO/near-noise —
+  // use __fmul_rn (not fmaf+0) and pack-only unroll; apply on all RedAdd paths.
   // Not hmul2 / PreferL1 / CTA doorbell skip / racy steal.
   __device__ __forceinline__
-  float2 float2ScaleFma(const float2& v, const float p) {
-    return float2{__fmaf_rn(v.x, p, 0.0f), __fmaf_rn(v.y, p, 0.0f)};
+  float2 float2ScaleFmul(const float2& v, const float p) {
+    return float2{__fmul_rn(v.x, p), __fmul_rn(v.y, p)};
   }
 
   __device__ __forceinline__
-  float floatScaleFma(const float v, const float p) {
-    return __fmaf_rn(v, p, 0.0f);
+  float floatScaleFmul(const float v, const float p) {
+    return __fmul_rn(v, p);
   }
 
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
-  // NCU29: SkipGmemLoad full-tile path uses FP32 FMA scale + unrolled vector packs.
+  // NCU30: FP32 __fmul_rn routing scale + pack unroll on all RedAdd paths (no outer unroll).
   template <
     int bM,
     int bN,
@@ -166,41 +167,8 @@ namespace flashmoe
       constexpr auto redElemsPerThread = totalElems / threads;
       constexpr int packWidth = RVD::VectorWidth::value;
       if (tileSize == bM) {
-        if constexpr (SkipGmemLoad && redElemsPerThread > 0) {
-          // NCU29: FP32 FMA scale + fully unrolled vector packs on fused full-tile path.
-#pragma unroll
-          for (int i = 0; i < redElemsPerThread; ++i) {
-            const auto idx = threadIdx.x + i * threads;
-            const auto rowIdx = idx / rbN;
-            const auto colIdx = idx % rbN;
-            const auto indexAndScale = stIds[rowIdx];
-            auto tokenValue = vsC(rowIdx, colIdx);
-            RVR scaledValue{};
-            const auto tokIdx = indexAndScale.tokenIdx;
-            const float p = indexAndScale.probability;
-            if constexpr (RAD::Width::value == 2) {
-              constexpr Converter<float2, RAT> loadOp{};
-              constexpr Converter<RAT, float2> storeOp{};
-#pragma unroll
-              for (int j = 0; j < packWidth; ++j) {
-                scaledValue[j] = storeOp(float2ScaleFma(loadOp(tokenValue[j]), p));
-              }
-            }
-            else {
-              using AccumType = cuda::std::common_type_t<float, RAT>;
-              constexpr Converter<AccumType, RAT> loadOp{};
-              constexpr Converter<RAT, AccumType> storeOp{};
-#pragma unroll
-              for (int j = 0; j < packWidth; ++j) {
-                scaledValue[j] = storeOp(floatScaleFma(loadOp(tokenValue[j]), p));
-              }
-            }
-            auto* __restrict__ tCp = (&tC(tokIdx, colIdx * packWidth));
-            constexpr RedAddOp op{};
-            op(tCp, scaledValue);
-          }
-        }
-        else for (int i = 0; i < redElemsPerThread; ++i) {
+        // NCU30: no outer unroll (NCU29 LOO risk); pack-unroll + __fmul_rn on all paths.
+        for (int i = 0; i < redElemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;
@@ -208,23 +176,22 @@ namespace flashmoe
           auto tokenValue = vsC(rowIdx, colIdx);
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
+          const float p = indexAndScale.probability;
           if constexpr (RAD::Width::value == 2) {
             constexpr Converter<float2, RAT> loadOp{};
             constexpr Converter<RAT, float2> storeOp{};
-            // fp16x2 or bf16x2
-            const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+#pragma unroll
             for (int j = 0; j < packWidth; ++j) {
-              // convert to float2 -> multiply -> convert back
-              scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+              scaledValue[j] = storeOp(float2ScaleFmul(loadOp(tokenValue[j]), p));
             }
           }
           else {
             using AccumType = cuda::std::common_type_t<float, RAT>;
             constexpr Converter<AccumType, RAT> loadOp{};
             constexpr Converter<RAT, AccumType> storeOp{};
+#pragma unroll
             for (int j = 0; j < packWidth; ++j) {
-              // convert to float -> multiply -> convert back
-              scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
+              scaledValue[j] = storeOp(floatScaleFmul(loadOp(tokenValue[j]), p));
             }
           }
           // account for the fact that the type of the below tile is either Element or RAT.
@@ -246,23 +213,22 @@ namespace flashmoe
             auto tokenValue = vsC(rowIdx, colIdx);
             RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
+            const float p = indexAndScale.probability;
             if constexpr (RAD::Width::value == 2) {
               constexpr Converter<float2, RAT> loadOp{};
               constexpr Converter<RAT, float2> storeOp{};
-              // fp16x2 or bf16x2
-              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+#pragma unroll
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float2 -> multiply -> convert back
-                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+                scaledValue[j] = storeOp(float2ScaleFmul(loadOp(tokenValue[j]), p));
               }
             }
             else {
               using AccumType = cuda::std::common_type_t<float, RAT>;
               constexpr Converter<AccumType, RAT> loadOp{};
               constexpr Converter<RAT, AccumType> storeOp{};
+#pragma unroll
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float -> multiply -> convert back
-                scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
+                scaledValue[j] = storeOp(floatScaleFmul(loadOp(tokenValue[j]), p));
               }
             }
             auto* __restrict__ tCp = &tC(tokIdx, colIdx * packWidth);
@@ -282,23 +248,22 @@ namespace flashmoe
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
           if (idx < actualElems) {
+            const float p = indexAndScale.probability;
             if constexpr (RAD::Width::value == 2) {
               constexpr Converter<float2, RAT> loadOp{};
               constexpr Converter<RAT, float2> storeOp{};
-              // fp16x2 or bf16x2
-              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+#pragma unroll
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float2 -> multiply -> convert back
-                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+                scaledValue[j] = storeOp(float2ScaleFmul(loadOp(tokenValue[j]), p));
               }
             }
             else {
               using AccumType = cuda::std::common_type_t<float, RAT>;
               constexpr Converter<AccumType, RAT> loadOp{};
               constexpr Converter<RAT, AccumType> storeOp{};
+#pragma unroll
               for (int j = 0; j < packWidth; ++j) {
-                // convert to float -> multiply -> convert back
-                scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
+                scaledValue[j] = storeOp(floatScaleFmul(loadOp(tokenValue[j]), p));
               }
             }
             auto* __restrict__ tCp = &tC(tokIdx, colIdx * packWidth);
