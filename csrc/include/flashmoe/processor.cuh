@@ -61,9 +61,11 @@ namespace flashmoe::processor
     cute::for_each(cute::make_int_sequence<accum_size>{}, [&c_frag, &d_frag](auto i) {
       d_frag(i) = storeConv(act(c_frag(i) + loadConv(d_frag(i))));
     });
-    // rmem -> smem (combine-compatible dense row-major when !WriteGmem)
+    // rmem -> smem (combine-compatible row-major when !WriteGmem)
+    // ARCH20: pad row stride by 8 to cut smem bank conflicts on the fused densify→combine path.
     if constexpr (!WriteGmem) {
-      using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BN, cute::_1>>;
+      using BNPad = cute::Int<cublasdx::size_of<BLAS>::n + 8>;
+      using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BNPad, cute::_1>>;
       auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
       __syncthreads();
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
@@ -380,8 +382,7 @@ namespace flashmoe::processor
           const auto mCoord = task.tileIdx / tilesN1;
           const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
-            // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
+            // ARCH20: smem-resident fuse + bank-padded densify + pipelined RedAdd (see combine).
             fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
               workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
