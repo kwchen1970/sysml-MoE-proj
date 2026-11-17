@@ -70,10 +70,12 @@ FLASHMOE_HD bool isHotExpert(unsigned expert, unsigned hot0, unsigned hot1) {
   return expert == hot0 || (hot1 != kNoExpert && expert == hot1);
 }
 
-// Two gated experts of this size already fill a 40 MB L2. When the longer
-// expert alone can occupy every free CTA, drop the partner.
+// Two gated experts of this size already fill a 40 MB L2. Drop the partner only
+// when the long pole has enough work for ~2x the free CTAs — keeps sticky1 dual
+// residency / more eligible tiles when the pole only barely fills occupancy
+// (HYB67; sticky1 kept from HYB66).
 FLASHMOE_HD void narrowToLongPole(const unsigned* hist, unsigned hot0, unsigned& hot1, unsigned slots) {
-  if (hot0 != kNoExpert && slots > 0 && hist[hot0] >= slots) {
+  if (hot0 != kNoExpert && slots > 0 && hist[hot0] >= 2u * slots) {
     hot1 = kNoExpert;
   }
 }

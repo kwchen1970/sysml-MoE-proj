@@ -131,8 +131,14 @@ static void testNarrowToLongPole() {
   unsigned hist[4] = {40, 12, 3, 0};
   unsigned hot0 = 0;
   unsigned hot1 = 1;
+  // HYB67: need ~2x slots before dropping partner (40 < 64 → keep).
   narrowToLongPole(hist, hot0, hot1, 32);
-  expect(hot1 == kNoExpert, "a long pole that fills the CTAs drops its partner");
+  expect(hot1 == 1, "a barely-full long pole keeps its partner");
+  hist[0] = 70;
+  hot1 = 1;
+  narrowToLongPole(hist, hot0, hot1, 32);
+  expect(hot1 == kNoExpert, "a 2x-filling long pole drops its partner");
+  hist[0] = 40;
   hot1 = 1;
   narrowToLongPole(hist, hot0, hot1, 48);
   expect(hot1 == 1, "a long pole that cannot fill the CTAs keeps its partner");
