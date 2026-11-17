@@ -794,9 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // NCU10: shared-A ElementC reg-gate frees gateCache; spend that smem on
-  // GEMM0 pS=2 (L1TEX pipeline depth) while keeping 2 blocks/SM. Two-pass
-  // stays HYB17 (pS=1 + gateCache). GEMM1 stays pS=1.
+  // NCU36: ARCH6 tip + L2 prefetch next-K in GEMM mainloop (tile.cuh).
+  // Targets L1TEX long-scoreboard without smem/occ change. Not occupancy
+  // rematch (EPI32/ARCH23). Host tiles stay ARCH6 (shared-A pS0=2).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
