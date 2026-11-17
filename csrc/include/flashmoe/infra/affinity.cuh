@@ -65,9 +65,10 @@ FLASHMOE_HD bool isHotExpert(unsigned expert, unsigned hot0, unsigned hot1) {
   return expert == hot0 || (hot1 != kNoExpert && expert == hot1);
 }
 
-// ARCH25: always single-hot — keep one expert's Down/Up weights L2-resident
-// for fused GEMM1 (weight-stationary). Complements Down L2 handoff prefetch.
-// Cold experts still fill idle CTAs via assignQueues. ≠ pS0 / launch_bounds.
+// ARCH25: always single-hot — keep one expert's Down weights L2-resident for
+// fused GEMM1 (weight-stationary). Complements host AccessPolicy window +
+// Down L2 handoff prefetch. Cold experts fill idle CTAs via assignQueues.
+// ≠ pS0 extremes / PreferL1 / launch_bounds minBlocks / racy steal.
 FLASHMOE_HD void narrowToLongPole(const unsigned* hist, unsigned hot0, unsigned& hot1, unsigned slots) {
   (void)hist;
   (void)hot0;

@@ -356,12 +356,13 @@ namespace flashmoe::processor
           __syncthreads();
           if (enqueue) {
             // ARCH25: L2-prefetch this expert's Down weights while enqueuing GEMM1
-            // (weight-stationary handoff). Targets NCU #2/#3 L1TEX/weight reuse.
-            // ≠ pS0 extremes, ≠ launch_bounds minBlocks, ≠ combine reshuffle.
+            // (weight-stationary handoff into the host AccessPolicy window).
+            // Targets NCU #2/#3 L1TEX/weight reuse. ≠ pS0 / launch_bounds / PreferL1.
             {
               const auto* __restrict__ downP =
                 expertDownWeights + expertWeightSize * task.localExpertIdx();
-              constexpr size_t kPrefetchBytes = 64 * 1024;
+              // Warm ~2 MiB of Down B into L2 (one expert is ~8 MiB @ I=H=2048 bf16).
+              constexpr size_t kPrefetchBytes = 2 * 1024 * 1024;
               constexpr int lineElems = static_cast<int>(128 / sizeof(Element));
               const size_t prefElems =
                 expertWeightSize < (kPrefetchBytes / sizeof(Element))
