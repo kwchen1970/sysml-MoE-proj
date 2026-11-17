@@ -795,7 +795,7 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI29: ARCH6 tip + bank-conflict-free padded fused C (stride bN+16).
+  // EPI30: rematch EPI29 tip (fused C pad +16) with WARMUP=3 RUNS=20.
   // Amplify EPI28 bank-pad +8→+16 to clear auto-margin. Not PreferL1 / doorbell / steal.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
