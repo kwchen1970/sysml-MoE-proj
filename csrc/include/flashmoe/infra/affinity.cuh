@@ -65,12 +65,15 @@ FLASHMOE_HD bool isHotExpert(unsigned expert, unsigned hot0, unsigned hot1) {
   return expert == hot0 || (hot1 != kNoExpert && expert == hot1);
 }
 
-// Two gated experts of this size already fill a 40 MB L2. When the longer
-// expert alone can occupy every free CTA, drop the partner.
+// ARCH23: always single-hot expert. ARCH6 already removed GMEM-before-combine;
+// dual L2 pair (ARCH15) dilutes down-proj B residency on the fused GEMM1 path.
+// Force one expert's weights into L2; admit cold only via assignQueues when the
+// long pole cannot fill free CTAs. ≠ combine densify/TPS/rmem/argsort reshuffle.
 FLASHMOE_HD void narrowToLongPole(const unsigned* hist, unsigned hot0, unsigned& hot1, unsigned slots) {
-  if (hot0 != kNoExpert && slots > 0 && hist[hot0] >= slots) {
-    hot1 = kNoExpert;
-  }
+  (void)hist;
+  (void)hot0;
+  (void)slots;
+  hot1 = kNoExpert;
 }
 
 // Prefix-clamp lane totals so the warp issues at most `slots` tasks.
