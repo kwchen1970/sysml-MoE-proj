@@ -334,28 +334,6 @@ namespace flashmoe::processor
           const auto* bP = expertUpWeights + expertWeightSize * task.localExpertIdx();
           auto* __restrict__ cP = reinterpret_cast<Element*>(task.cData[0]);
           const auto* __restrict__ biasP = biasUp + static_cast<size_t>(I) * task.localExpertIdx();
-          // EPI36: L2-prefetch this expert's Up (+Gate) weights before GEMM0 MMA.
-          // Targets ARCH6 mid L1TEX long-scoreboard / 2.7% L1 hit (weight streaming).
-          // Complementary to ARCH25 Down@GEMM1-enqueue; ≠ pad+8 / carveout / pS0=1 / single-hot.
-          {
-            constexpr size_t kPrefetchBytes = 64 * 1024;
-            constexpr int lineElems = static_cast<int>(128 / sizeof(Element));
-            const size_t prefElems =
-              expertWeightSize < (kPrefetchBytes / sizeof(Element))
-                ? expertWeightSize
-                : (kPrefetchBytes / sizeof(Element));
-            for (size_t i = static_cast<size_t>(threadIdx.x) * lineElems; i < prefElems;
-                 i += static_cast<size_t>(threads) * lineElems) {
-              asm volatile("prefetch.global.L2 [%0];" ::"l"(bP + i) : "memory");
-            }
-            if constexpr (mt != MLPMatmulType::vanilla) {
-              const auto* bPvPref = expertUpVWeights + expertWeightSize * task.localExpertIdx();
-              for (size_t i = static_cast<size_t>(threadIdx.x) * lineElems; i < prefElems;
-                   i += static_cast<size_t>(threads) * lineElems) {
-                asm volatile("prefetch.global.L2 [%0];" ::"l"(bPvPref + i) : "memory");
-              }
-            }
-          }
           if constexpr (mt == MLPMatmulType::vanilla) {
             fGET<TileGEMM0, Activation>(workspace, aP, bP, cP, biasP, task.M(), I, H, task.tileIdx);
           }

@@ -173,7 +173,7 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI36: bounds=1 (no minBlocks). Keep MAX_PROCESSORS schedCap. No pad/carveout/pS0=1.
+  // EPI37: bounds=1. Keep schedCap. Weight-only next-K L2 prefetch in tile.cuh.
   __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();

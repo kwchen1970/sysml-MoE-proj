@@ -794,8 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI36: Up/Gate L2 prefetch @ GEMM0 (processor.cuh) — hide L1TEX long-scoreboard.
-  // Abandon pad+8 rematch (EPI35 NO_KEEP). Shared-A pS0=2. No PreferL1 / carveout / pS0=1.
+  // EPI37: weight-only next-K L2 prefetch in GEMM mainloop (tile.cuh).
+  // Abandon EPI36 Up@GEMM0 entry (+4.6%) and EPI35 pad+8. Shared-A pS0=2.
+  // No PreferL1 / carveout50 / pS0=1 / A+B prefetch rematch (EPI19).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -866,7 +867,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI36: ARCH6 shared-A pS0=2 + Up/Gate L2 prefetch (not pad/pS0 extremes).
+    // EPI37: ARCH6 shared-A pS0=2 + B-only next-K L2 prefetch.
     launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
