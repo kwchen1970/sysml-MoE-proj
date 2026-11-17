@@ -287,27 +287,15 @@ namespace flashmoe::processor
     constexpr auto taskWidth = sizeof(Task) / sizeof(uint4);
     const size_t expertWeightSize = static_cast<size_t>(I) * H;
     static_assert(taskWidth > 0 && taskWidth < WARP_SIZE);
-    // ARCH14: chain-drain on ARCH6 fused tip.
-    // Scheduler posts the next doorbell eagerly (sQ=ready before we finish). After each
-    // task, peek and consume any already-posted successor without a blocking wait —
-    // cuts no-eligible bubbles while keeping full GEMM0/GEMM1 CTA concurrency
-    // (not steal / not pairing / not inline tile-0).
-    __shared__ uint chainReady;
-    if (!threadIdx.x) {
-      chainReady = 0U;
-    }
-    __syncthreads();
     while (!tqs.interrupt) {
       FLASHMOE_TRACE_STATE(flashmoe::project_trace::wait);
       if (threadIdx.x / WARP_SIZE == 0) {
         if (threadIdx.x == 0) {
           cuda::atomic_ref<uint64_t, cuda::thread_scope_device> doorbell{*pA.pDB};
+          // await new task from scheduler
           auto payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
-          // Chain hit only if a successor is already visible; otherwise block as usual.
-          if (!chainReady || (payload.signal == tqs.signal && payload.interrupt == 0)) {
-            while (payload.signal == tqs.signal && payload.interrupt == 0) {
-              payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
-            }
+          while (payload.signal == tqs.signal && payload.interrupt == 0) {
+            payload = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
           }
           FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
           if (payload.interrupt) {
@@ -323,7 +311,6 @@ namespace flashmoe::processor
           globalInterrupt = payload.interrupt;
           // replace old payload with new one
           tqs = payload;
-          chainReady = 0U;
         }
         __syncwarp();
         auto payload = cuda::std::bit_cast<uint64_t>(tqs);
@@ -404,10 +391,9 @@ namespace flashmoe::processor
             combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
             if (!threadIdx.x) {
-              const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
-              const auto producerBit = static_cast<uint8_t>(prevBit == 0 ? 1 : 0);
-              producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord) = producerBit;
-              // No flag store — subscriber pre-visits combine flags; sense flipped in-place.
+              // ARCH15: NVLINK fuse path never stores PacketStage::last flags — skip
+              // producerBitMap RMW; only sense-flip for epoch completion.
+              (void)producerBitMap;
               constexpr uint subCount = threads - WARP_SIZE;
               const auto flagIdx = static_cast<uint>(nCoord) * flagColStride
                 + static_cast<uint>(task.expertIdx()) * ecTilesM + static_cast<uint>(mCoord);
@@ -475,15 +461,6 @@ namespace flashmoe::processor
         __syncthreads(); // trace boundary includes completion by all task threads
         FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
 #endif
-        // ARCH14 chain peek: if the scheduler already posted our next doorbell
-        // (possible because we set sQ=ready before this task), skip the blocking wait.
-        __syncthreads();
-        if (!threadIdx.x) {
-          cuda::atomic_ref<uint64_t, cuda::thread_scope_device> doorbell{*pA.pDB};
-          const auto peek = cuda::std::bit_cast<TQSignal>(doorbell.load(cuda::memory_order_acquire));
-          chainReady = (peek.signal != tqs.signal || peek.interrupt != 0) ? 1U : 0U;
-        }
-        __syncthreads();
       }
     }
     FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);

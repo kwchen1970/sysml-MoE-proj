@@ -67,10 +67,10 @@ FLASHMOE_HD bool isHotExpert(unsigned expert, unsigned hot0, unsigned hot1) {
 
 // Two gated experts of this size already fill a 40 MB L2. When the longer
 // expert alone can occupy every free CTA, drop the partner.
-FLASHMOE_HD void narrowToLongPole(const unsigned* hist, unsigned hot0, unsigned& hot1, unsigned slots) {
-  if (hot0 != kNoExpert && slots > 0 && hist[hot0] >= slots) {
-    hot1 = kNoExpert;
-  }
+// ARCH15: keep the dual-expert L2 pair on the ARCH6 fused GEMM1→combine tip —
+// dropping the partner thrash-reloads down-proj B when its work arrives next.
+FLASHMOE_HD void narrowToLongPole(const unsigned* /*hist*/, unsigned /*hot0*/, unsigned& /*hot1*/,
+                                  unsigned /*slots*/) {
 }
 
 // Prefix-clamp lane totals so the warp issues at most `slots` tasks.

@@ -195,7 +195,8 @@ namespace flashmoe::moe
       ctx.symHeap, ctx.nLx, roundEC, kArgs.H, sizeof(DataType)
     };
     const auto processors = gridDim.x - 1;
-    const auto dispatchProcessors = cute::max((processors * 3) / 4, 1); // 75%
+    // ARCH15: leaner dispatch share (50%) so more persistent CTAs stay on fused GEMM0/GEMM1.
+    const auto dispatchProcessors = cute::max(processors / 2, 1); // 50%
     const auto superBlockSize = min(dispatchSuperBlockSize(kArgs.E), dispatchProcessors);
     const auto dispatchBlocks = cuda::round_down(cute::min(superBlockSize * kArgs.E, MAX_DISPATCH_BLOCKS, dispatchProcessors), superBlockSize);
     if (blockIdx.x == gridDim.x - 1) {
