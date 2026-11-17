@@ -27,6 +27,15 @@ namespace flashmoe
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
   // NCU33: SkipGmemLoad plural RedAdd loads TPS via __ldg (skip smem stIds staging;
   // not fmul/fmaf/dual-ILP/SoA/hmul2).
+  __device__ __forceinline__
+  TPS ldgTPS(const TPS* __restrict__ p) {
+    const auto raw = __ldg(reinterpret_cast<const unsigned long long*>(p));
+    TPS out{};
+    out.tokenIdx = static_cast<uint32_t>(raw);
+    out.probability = __uint_as_float(static_cast<uint32_t>(raw >> 32));
+    return out;
+  }
+
   template <
     int bM,
     int bN,
@@ -164,7 +173,7 @@ namespace flashmoe
             const auto idx = threadIdx.x + i * threads;
             const auto rowIdx = idx / rbN;
             const auto colIdx = idx % rbN;
-            const auto indexAndScale = __ldg(tokenIndices + rowIdx);
+            const auto indexAndScale = ldgTPS(tokenIndices + rowIdx);
             auto tokenValue = vsC(rowIdx, colIdx);
             RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
@@ -233,7 +242,7 @@ namespace flashmoe
             const auto colIdx = idx % rbN;
             TPS indexAndScale;
             if constexpr (SkipGmemLoad) {
-              indexAndScale = __ldg(tokenIndices + rowIdx);
+              indexAndScale = ldgTPS(tokenIndices + rowIdx);
             } else {
               indexAndScale = stIds[rowIdx];
             }
@@ -273,7 +282,7 @@ namespace flashmoe
           const auto colIdx = idx % rbN;
           TPS indexAndScale;
           if constexpr (SkipGmemLoad) {
-            indexAndScale = __ldg(tokenIndices + rowIdx);
+            indexAndScale = ldgTPS(tokenIndices + rowIdx);
           } else {
             indexAndScale = stIds[rowIdx];
           }
