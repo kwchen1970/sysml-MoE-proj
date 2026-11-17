@@ -47,7 +47,9 @@ namespace flashmoe
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
     __shared__ TPS stIds[bM];
-    using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
+    // EPI35/EPI28: fused SkipGmemLoad path pads C rows (bN+8) to break 256B bank conflicts.
+    constexpr int bNSmem = SkipGmemLoad ? (bN + 8) : bN;
+    using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bNSmem>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
@@ -68,7 +70,9 @@ namespace flashmoe
       using VT = VTD::VectorType;
       static_assert(cuda::std::is_trivially_copyable_v<VT>);
       constexpr auto vw = VTD::VectorWidth::value;
+      static_assert(bNSmem % vw == 0);
       constexpr auto vbN = bN / vw;
+      constexpr auto vbNSmem = bNSmem / vw;
       constexpr auto nElems = vbN * bM;
       const auto actualElems = tileSize * vbN;
       constexpr auto elemsPerThread = nElems / threads;
@@ -78,9 +82,9 @@ namespace flashmoe
                                   cute::make_layout(cute::make_shape(S, vH), cute::LayoutRight{}));
       // we enforce H % bN == 0 cpu-side
       auto tC = cute::local_tile(mC, cute::make_shape(S, cute::Int<vbN>{}), tileCoord);
-      // row major layout
+      // row major layout (padded smem stride when fused)
       using VSL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<vbN>>,
-                               cute::Stride<cute::Int<vbN>, cute::_1>>;
+                               cute::Stride<cute::Int<vbNSmem>, cute::_1>>;
       const auto vsC = cute::make_tensor(cute::make_smem_ptr(static_cast<const VT*>(workspace)),
                                          VSL{});
       // vector copy results to gmem and call it a day
@@ -138,9 +142,11 @@ namespace flashmoe
       static_assert(cuda::std::is_trivially_copyable_v<RV>);
 
       constexpr int totalVecWidth = RVD::VectorWidth::value * RAD::Width::value;
+      static_assert(bNSmem % totalVecWidth == 0);
       constexpr auto rbN = bN / totalVecWidth;
+      constexpr auto rbNSmem = bNSmem / totalVecWidth;
       using RSL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<rbN>>,
-                               cute::Stride<cute::Int<rbN>, cute::_1>>;
+                               cute::Stride<cute::Int<rbNSmem>, cute::_1>>;
       const auto vsC = cute::make_tensor(cute::make_smem_ptr(static_cast<const RV*>(workspace)),
                                          RSL{});
       // row major output
