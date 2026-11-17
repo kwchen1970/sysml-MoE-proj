@@ -65,12 +65,15 @@ FLASHMOE_HD bool isHotExpert(unsigned expert, unsigned hot0, unsigned hot1) {
   return expert == hot0 || (hot1 != kNoExpert && expert == hot1);
 }
 
-// Two gated experts of this size already fill a 40 MB L2. When the longer
-// expert alone can occupy every free CTA, drop the partner.
+// HYB72: keep dual-hot residency — never drop the partner for a long pole.
+// Opposite of NCU37 always-single-hot (MARGINAL). Not hot0-first, not sticky0/1,
+// not cold-GEMM1 admit. Two experts already fit a 40 MB L2; dropping the partner
+// only forces a later B reload when the second expert returns.
 FLASHMOE_HD void narrowToLongPole(const unsigned* hist, unsigned hot0, unsigned& hot1, unsigned slots) {
-  if (hot0 != kNoExpert && slots > 0 && hist[hot0] >= slots) {
-    hot1 = kNoExpert;
-  }
+  (void)hist;
+  (void)hot0;
+  (void)hot1;
+  (void)slots;
 }
 
 // Prefix-clamp lane totals so the warp issues at most `slots` tasks.
