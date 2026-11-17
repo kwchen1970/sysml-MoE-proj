@@ -170,7 +170,8 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  __launch_bounds__(Config::Threads::value, 1)
+  // EPI32: ask for 3 resident CTAs/SM once shallower shared-A smem frees the smem cap.
+  __launch_bounds__(Config::Threads::value, 3)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;

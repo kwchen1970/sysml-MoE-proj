@@ -394,15 +394,11 @@ void kickstart(const Options& opts) {
   if (kernelTopo == flashmoe::Topology::NVLINK_ONLY) {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::NVLINK_ONLY>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
-    // EPI31: midpoint smem carveout (EPI17 PreferSharedMemoryCarveout=100 was near-flat).
-    CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, 50));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
   else {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::MIXED>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
-    // EPI31: midpoint smem carveout (EPI17 PreferSharedMemoryCarveout=100 was near-flat).
-    CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, 50));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
 
@@ -798,8 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI31: ARCH6 tip + PreferSharedMemoryCarveout=50 (EPI17 was 100 → +0.89%).
-  // Abandon pad+8/+16 keep path (EPI30 collapsed). Not PreferL1 / pS1@E16 / doorbell / steal.
+  // EPI32: shrink CTA footprint for occupancy (ARCH6 NCU: 12.5% occ, smem+regs cap 2 blk/SM).
+  // Shallower shared-A pS0=1 + launch_bounds(.,3). Abandon PreferSharedMemoryCarveout (EPI31 +40%).
+  // Not PreferL1 / pad amp / pS1@E16 / doorbell / steal.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -870,7 +867,8 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
+    // EPI32: shallower GEMM0 stages (pS0=1) cuts ABGated smem vs ARCH6 pS0=2.
+    launch(cute::Int<64>{}, cute::Int<1>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
   }
