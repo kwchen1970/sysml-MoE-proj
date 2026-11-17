@@ -794,9 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI22: ARCH6 tip + megakernel __launch_bounds__(threads, 2).
-  // Orthogonal to exhausted: shape-aware pS1=2 / PreferEqual / L2-nextK / PreferL1 / carveout / pS0=3.
-  constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
+  // EPI23: ARCH6 tip + bf16 GEMM1 bN1=64 (finer N tiles / combine).
+  // launch_bounds=2 abandoned (+3.9%). Not shape-pS1 / PreferEqual / L2-nextK / PreferL1 / carveout / pS0=3.
+  constexpr int bN1 = 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
