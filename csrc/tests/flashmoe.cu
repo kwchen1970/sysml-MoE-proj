@@ -377,9 +377,8 @@ void kickstart(const Options& opts) {
     ? sizeof(Element) * bM * bN0 : 0;
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
     + gateCacheBytes, flashmoe::MAX_ALIGNMENT);
-  // EPI29: pad fused C by +16 cols for bank-conflict-free row stride (amplify EPI28 +8).
   constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
-    sizeof(Element) * bM * (bN1 + 16)), flashmoe::MAX_ALIGNMENT);
+    sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
 
   const auto kernelSz = flashmoe::moe::kernelSMEM<Config>(opts.E, opts.EC, world, numLocalExperts, tilesN1);
   int maxSharedMemory = 0;
@@ -395,11 +394,15 @@ void kickstart(const Options& opts) {
   if (kernelTopo == flashmoe::Topology::NVLINK_ONLY) {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::NVLINK_ONLY>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
+    // EPI31: midpoint smem carveout (EPI17 PreferSharedMemoryCarveout=100 was near-flat).
+    CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, 50));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
   else {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::MIXED>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
+    // EPI31: midpoint smem carveout (EPI17 PreferSharedMemoryCarveout=100 was near-flat).
+    CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, 50));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
 
@@ -795,9 +798,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI30: rematch EPI29 tip (fused C pad +16) with WARMUP=3 RUNS=20.
-  // Amplify EPI28 bank-pad +8→+16 to clear auto-margin. Not PreferL1 / doorbell / steal.
-  constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
+  // EPI31: ARCH6 tip + PreferSharedMemoryCarveout=50 (EPI17 was 100 → +0.89%).
+  // Abandon pad+8/+16 keep path (EPI30 collapsed). Not PreferL1 / pS1@E16 / doorbell / steal.
+  constexpr int bN1  constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
