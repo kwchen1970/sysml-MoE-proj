@@ -794,8 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI25: ARCH6 tip + drop redundant fuse epilogue syncthreads (combine barriers).
-  // Revert EPI24 eight-byte banks (NO_KEEP +0.16%). Not PreferL1 / doorbell-skip / steal.
+  // EPI26: ARCH6 tip + spend GEMM1 smem (pS1=2) only when E==16 on shared-A.
+  // Revert EPI25 sync-drop (NO_KEEP +4.1%). Narrower than EPI21 (E<=64&&S>=4096 MARGINAL).
+  // Not PreferL1 / doorbell-skip / steal / another syncthreads trim.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -866,7 +867,12 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
+    // EPI26: deepen GEMM1 only for E==16 (EPI21's −19.6% mid); skip E=8/32/128.
+    if (E == 16) {
+      launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<2>{});
+    } else {
+      launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
+    }
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
   }
