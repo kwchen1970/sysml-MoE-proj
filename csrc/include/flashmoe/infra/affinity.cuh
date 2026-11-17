@@ -92,6 +92,9 @@ FLASHMOE_HD void clampToSlots(const unsigned* local, unsigned n, unsigned slots,
 // Global queues are taken whole so a one-shot head is never split.
 // Subscriber queues may be taken partially. Global queues are preferred
 // inside a budget so a finished GEMM1 is not stuck behind more GEMM0.
+// HYB71: within the hot budget, issue hot0 (primary) before hot1 so the
+// long-pole B stays resident in L2; partner fills only leftover slots.
+// Not sticky0/1 rematch; not cold-GEMM1; dual-hot longpole unchanged.
 FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
                               unsigned hot0, unsigned hot1,
                               unsigned hotBudget, unsigned coldBudget,
@@ -99,25 +102,31 @@ FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
   for (unsigned i = 0; i < nq; ++i) {
     take[i] = 0;
   }
-  for (unsigned pass = 0; pass < 2; ++pass) {
-    const bool wantGlobal = pass == 0;
-    for (unsigned i = 0; i < nq; ++i) {
-      const LocalQueue& q = queues[i];
-      if (q.tasks == 0 || q.globalQueue != wantGlobal || !isHotExpert(q.expert, hot0, hot1)) {
-        continue;
-      }
-      if (hotBudget == 0) {
-        continue;
-      }
-      if (q.globalQueue) {
-        take[i] = q.tasks;
-        hotBudget = hotBudget > q.tasks ? hotBudget - q.tasks : 0;
-      } else if (hotBudget >= q.tasks) {
-        take[i] = q.tasks;
-        hotBudget -= q.tasks;
-      } else {
-        take[i] = hotBudget;
-        hotBudget = 0;
+  for (unsigned expertPass = 0; expertPass < 2; ++expertPass) {
+    const unsigned wantExpert = expertPass == 0 ? hot0 : hot1;
+    if (wantExpert == kNoExpert) {
+      continue;
+    }
+    for (unsigned pass = 0; pass < 2; ++pass) {
+      const bool wantGlobal = pass == 0;
+      for (unsigned i = 0; i < nq; ++i) {
+        const LocalQueue& q = queues[i];
+        if (q.tasks == 0 || q.globalQueue != wantGlobal || q.expert != wantExpert) {
+          continue;
+        }
+        if (hotBudget == 0) {
+          continue;
+        }
+        if (q.globalQueue) {
+          take[i] = q.tasks;
+          hotBudget = hotBudget > q.tasks ? hotBudget - q.tasks : 0;
+        } else if (hotBudget >= q.tasks) {
+          take[i] = q.tasks;
+          hotBudget -= q.tasks;
+        } else {
+          take[i] = hotBudget;
+          hotBudget = 0;
+        }
       }
     }
   }

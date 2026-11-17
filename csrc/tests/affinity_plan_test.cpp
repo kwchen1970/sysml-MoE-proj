@@ -126,6 +126,18 @@ static void testGlobalQueueIsWhole() {
   expect(take == 0, "a zero budget leaves the one-shot queue untouched");
 }
 
+static void testHot0First() {
+  // HYB71: with a tight hot budget, primary (hot0) is issued before partner.
+  LocalQueue queues[2] = {
+    LocalQueue{1, 8, false}, // partner listed first
+    LocalQueue{0, 8, false}, // primary
+  };
+  unsigned take[2] = {};
+  assignQueues(queues, 2, /*hot0=*/0, /*hot1=*/1, /*hotBudget=*/8, /*coldBudget=*/0, take);
+  expect(take[1] == 8, "HYB71: hot0 consumes the hot budget first");
+  expect(take[0] == 0, "HYB71: hot1 waits when hot0 fills the budget");
+}
+
 static void testNarrowToLongPole() {
   unsigned hist[4] = {40, 12, 3, 0};
   unsigned hot0 = 0;
@@ -143,6 +155,7 @@ int main() {
   testAdmitAndCap();
   testAdmitColdWhenShort();
   testGlobalQueueIsWhole();
+  testHot0First();
   testNarrowToLongPole();
   if (failures) {
     std::printf("%d failure(s)\n", failures);
