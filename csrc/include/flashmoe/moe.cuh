@@ -79,10 +79,8 @@ namespace flashmoe::moe
     constexpr int bM = bM0;
     using TileG0 = tile::CollectiveMainloop<bM0, bN0, bK0, Config::Arch::value, Element,
       typename Config::AccumType, threads, pSK0>;
-    // Shared-A (bN0<=64): NCU10 reg-gate frees gateCache; wide two-pass keeps it.
-    constexpr auto gemm0AB = (mt == MLPMatmulType::gated && bN0 <= 64)
-      ? TileG0::SharedSizeABGated::value
-      : TileG0::SharedSizeAB::value;
+    // ARCH27: shared-A sequential uses A+one-B (SharedSizeAB), not dual-B gated footprint.
+    constexpr auto gemm0AB = TileG0::SharedSizeAB::value;
     constexpr auto gateCacheBytes = (mt == MLPMatmulType::gated && bN0 > 64)
       ? sizeof(Element) * bM * bN0 : 0;
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)

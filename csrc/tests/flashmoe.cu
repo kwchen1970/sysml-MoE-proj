@@ -369,9 +369,8 @@ void kickstart(const Options& opts) {
 
   const auto roundEC = cute::ceil_div(opts.EC, bM) * bM;
   using TileG0Host = flashmoe::tile::CollectiveMainloop<bM, bN0, bK0, Arch, Element, AccumType, threads, pSK0>;
-  constexpr auto gemm0AB = (mt == flashmoe::MLPMatmulType::gated && bN0 <= 64)
-    ? TileG0Host::SharedSizeABGated::value
-    : TileG0Host::SharedSizeAB::value;
+  // ARCH27: sequential shared-A → SharedSizeAB (not dual-B Gated).
+  constexpr auto gemm0AB = TileG0Host::SharedSizeAB::value;
   // NCU10: shared-A reg-gate drops gateCache; two-pass still needs it.
   constexpr auto gateCacheBytes = (mt == flashmoe::MLPMatmulType::gated && bN0 > 64)
     ? sizeof(Element) * bM * bN0 : 0;
