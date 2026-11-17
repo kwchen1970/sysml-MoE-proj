@@ -25,6 +25,8 @@ namespace flashmoe
 
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
+  // NCU33: SkipGmemLoad plural RedAdd loads TPS via __ldg (skip smem stIds staging;
+  // not fmul/fmaf/dual-ILP/SoA/hmul2).
   template <
     int bM,
     int bN,
@@ -46,14 +48,17 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    __shared__ TPS stIds[bM];
+    constexpr bool stageStIds = !SkipGmemLoad || c == CombineMode::single;
+    __shared__ TPS stIds[stageStIds ? bM : 1];
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
-    for (int i = threadIdx.x; i < bM; i += threads) {
-      stIds[i] = tokenIndices[i];
+    if constexpr (stageStIds) {
+      for (int i = threadIdx.x; i < bM; i += threads) {
+        stIds[i] = tokenIndices[i];
+      }
     }
     if constexpr (!SkipGmemLoad) {
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
@@ -153,7 +158,38 @@ namespace flashmoe
       constexpr auto redElemsPerThread = totalElems / threads;
       constexpr int packWidth = RVD::VectorWidth::value;
       if (tileSize == bM) {
-        for (int i = 0; i < redElemsPerThread; ++i) {
+        if constexpr (SkipGmemLoad) {
+          // NCU33: __ldg TPS from gmem — skip smem stIds staging on fused path.
+          for (int i = 0; i < redElemsPerThread; ++i) {
+            const auto idx = threadIdx.x + i * threads;
+            const auto rowIdx = idx / rbN;
+            const auto colIdx = idx % rbN;
+            const auto indexAndScale = __ldg(tokenIndices + rowIdx);
+            auto tokenValue = vsC(rowIdx, colIdx);
+            RVR scaledValue{};
+            const auto tokIdx = indexAndScale.tokenIdx;
+            if constexpr (RAD::Width::value == 2) {
+              constexpr Converter<float2, RAT> loadOp{};
+              constexpr Converter<RAT, float2> storeOp{};
+              const auto scale2 = float2{indexAndScale.probability, indexAndScale.probability};
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = storeOp(float2Mul(loadOp(tokenValue[j]), scale2));
+              }
+            }
+            else {
+              using AccumType = cuda::std::common_type_t<float, RAT>;
+              constexpr Converter<AccumType, RAT> loadOp{};
+              constexpr Converter<RAT, AccumType> storeOp{};
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
+              }
+            }
+            auto* __restrict__ tCp = (&tC(tokIdx, colIdx * packWidth));
+            constexpr RedAddOp op{};
+            op(tCp, scaledValue);
+          }
+        }
+        else for (int i = 0; i < redElemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;
@@ -195,7 +231,12 @@ namespace flashmoe
           if (idx < actualElems) {
             const auto rowIdx = idx / rbN;
             const auto colIdx = idx % rbN;
-            const auto indexAndScale = stIds[rowIdx];
+            TPS indexAndScale;
+            if constexpr (SkipGmemLoad) {
+              indexAndScale = __ldg(tokenIndices + rowIdx);
+            } else {
+              indexAndScale = stIds[rowIdx];
+            }
             auto tokenValue = vsC(rowIdx, colIdx);
             RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
@@ -230,7 +271,12 @@ namespace flashmoe
           const auto idx = threadIdx.x + redElemsPerThread * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;
-          const auto indexAndScale = stIds[rowIdx];
+          TPS indexAndScale;
+          if constexpr (SkipGmemLoad) {
+            indexAndScale = __ldg(tokenIndices + rowIdx);
+          } else {
+            indexAndScale = stIds[rowIdx];
+          }
           auto tokenValue = vsC(rowIdx, colIdx);
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
