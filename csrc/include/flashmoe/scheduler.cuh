@@ -429,7 +429,9 @@ namespace flashmoe::scheduler
         }
         if (isHotExpert(local[i].expert, hot0, hot1)) {
           hotLocal += local[i].tasks;
-        } else {
+        } else if (local[i].globalQueue) {
+          // HYB70: cold budget only tracks GEMM1 (global) so idle CTAs drain
+          // fuse work instead of starting cold GEMM0 B reloads.
           coldLocal += local[i].tasks;
         }
       }

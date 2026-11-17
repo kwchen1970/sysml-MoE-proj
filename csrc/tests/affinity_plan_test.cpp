@@ -89,8 +89,8 @@ static void testAdmitAndCap() {
 }
 
 static void testAdmitColdWhenShort() {
-  // Top two experts have 4 tasks each. A third expert is colder and is only
-  // admitted because 8 tasks cannot occupy 32 CTAs.
+  // Top two experts have 4 tasks each. Idle CTAs remain; HYB70 admits cold
+  // GEMM1 (global) only — cold GEMM0 subscriber work stays blocked.
   unsigned hist[4] = {4, 4, 0, 4};
   unsigned hot0, hot1;
   chooseHotExperts(hist, 4, kNoExpert, kNoExpert, hot0, hot1);
@@ -99,21 +99,23 @@ static void testAdmitColdWhenShort() {
   const unsigned hotTotal = hist[hot0] + hist[hot1];
   expect(hotTotal < slots, "hot work cannot fill the CTAs");
 
-  LocalQueue queues[2] = {
+  LocalQueue queues[3] = {
     LocalQueue{0, 4, false},
     LocalQueue{3, 40, false},
+    LocalQueue{3, 16, true},
   };
   unsigned hotBudget[1];
   unsigned coldBudget[1];
   const unsigned hotLocal[1] = {4};
-  const unsigned coldLocal[1] = {40};
+  const unsigned coldLocal[1] = {56};
   clampToSlots(hotLocal, 1, 0xffffffffu, hotBudget);
   const unsigned coldSlots = slots - hotTotal;
   clampToSlots(coldLocal, 1, coldSlots, coldBudget);
-  unsigned take[2] = {};
-  assignQueues(queues, 2, hot0, hot1, hotBudget[0], coldBudget[0], take);
+  unsigned take[3] = {};
+  assignQueues(queues, 3, hot0, hot1, hotBudget[0], coldBudget[0], take);
   expect(take[0] == 4, "all hot tasks are issued when they do not fill the GPU");
-  expect(take[1] == coldSlots, "a cold expert is admitted only to fill idle CTAs");
+  expect(take[1] == 0, "HYB70: cold GEMM0 is not admitted to fill idle CTAs");
+  expect(take[2] == 16, "HYB70: cold GEMM1 drains whole into idle CTAs");
 }
 
 static void testGlobalQueueIsWhole() {

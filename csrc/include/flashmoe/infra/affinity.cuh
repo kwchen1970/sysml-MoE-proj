@@ -121,28 +121,20 @@ FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
       }
     }
   }
-  for (unsigned pass = 0; pass < 2; ++pass) {
-    const bool wantGlobal = pass == 0;
-    for (unsigned i = 0; i < nq; ++i) {
-      const LocalQueue& q = queues[i];
-      if (q.tasks == 0 || q.globalQueue != wantGlobal || take[i] != 0 ||
-          isHotExpert(q.expert, hot0, hot1)) {
-        continue;
-      }
-      if (coldBudget == 0) {
-        continue;
-      }
-      if (q.globalQueue) {
-        take[i] = q.tasks;
-        coldBudget = coldBudget > q.tasks ? coldBudget - q.tasks : 0;
-      } else if (coldBudget >= q.tasks) {
-        take[i] = q.tasks;
-        coldBudget -= q.tasks;
-      } else {
-        take[i] = coldBudget;
-        coldBudget = 0;
-      }
+  // HYB70: cold admit drains GEMM1 (global) only — never start a cold GEMM0
+  // that reloads B while idle CTAs can instead finish in-flight fuse work.
+  // Hot path unchanged (local+global). sticky0/sticky1 untouched.
+  for (unsigned i = 0; i < nq; ++i) {
+    const LocalQueue& q = queues[i];
+    if (q.tasks == 0 || !q.globalQueue || take[i] != 0 ||
+        isHotExpert(q.expert, hot0, hot1)) {
+      continue;
     }
+    if (coldBudget == 0) {
+      break;
+    }
+    take[i] = q.tasks;
+    coldBudget = coldBudget > q.tasks ? coldBudget - q.tasks : 0;
   }
 }
 } // namespace flashmoe::scheduler
