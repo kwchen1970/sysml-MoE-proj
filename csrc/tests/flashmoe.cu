@@ -377,9 +377,8 @@ void kickstart(const Options& opts) {
     ? sizeof(Element) * bM * bN0 : 0;
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
     + gateCacheBytes, flashmoe::MAX_ALIGNMENT);
-  // EPI35/EPI28: pad fused C by +8 cols for bank-conflict-free row stride.
   constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
-    sizeof(Element) * bM * (bN1 + 8)), flashmoe::MAX_ALIGNMENT);
+    sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
 
   const auto kernelSz = flashmoe::moe::kernelSMEM<Config>(opts.E, opts.EC, world, numLocalExperts, tilesN1);
   int maxSharedMemory = 0;
@@ -795,8 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI35: return EPI28-class fused C pad+8 (MARGINAL −1.18%). Abandon pS0=3 (EPI34 +26%).
-  // Shared-A pS0=2. No PreferL1 / launch_bounds minBlocks / pS0=1 / carveout / doorbell / steal.
+  // EPI36: Up/Gate L2 prefetch @ GEMM0 (processor.cuh) — hide L1TEX long-scoreboard.
+  // Abandon pad+8 rematch (EPI35 NO_KEEP). Shared-A pS0=2. No PreferL1 / carveout / pS0=1.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -867,7 +866,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI35: ARCH6 shared-A pS0=2 + fused C pad+8 (EPI28).
+    // EPI36: ARCH6 shared-A pS0=2 + Up/Gate L2 prefetch (not pad/pS0 extremes).
     launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
