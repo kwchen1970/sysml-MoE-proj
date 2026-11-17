@@ -84,7 +84,9 @@ namespace flashmoe
       const auto vsC = cute::make_tensor(cute::make_smem_ptr(static_cast<const VT*>(workspace)),
                                          VSL{});
       // vector copy results to gmem and call it a day
+      // HYB57: unroll full-tile combine loops (not __ldg/__ldcs/Prefer*/L2/partial-stids).
       if (tileSize == bM) {
+        #pragma unroll
         for (int i = 0; i < elemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / vbN;
@@ -152,7 +154,9 @@ namespace flashmoe
       const auto actualElems = tileSize * rbN;
       constexpr auto redElemsPerThread = totalElems / threads;
       constexpr int packWidth = RVD::VectorWidth::value;
+      // HYB57: unroll full-tile atomic reduce (plain TPS staging; not ldg/ldcs/Prefer*).
       if (tileSize == bM) {
+        #pragma unroll
         for (int i = 0; i < redElemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / rbN;
