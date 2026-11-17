@@ -62,8 +62,8 @@ namespace flashmoe::processor
       d_frag(i) = storeConv(act(c_frag(i) + loadConv(d_frag(i))));
     });
     // rmem -> smem (combine-compatible dense row-major when !WriteGmem)
-    // HYB60: omit trailing syncthreads — fused combine stages TPS then syncs once,
-    // which publishes both sC and stIds. Cuts one CTA barrier on the ARCH6 fuse path.
+    // HYB60/61: omit trailing syncthreads — caller publishes sC with a later barrier.
+    // HYB61 stages TPS before this leading sync so TPS and copy_fragment do not overlap.
     if constexpr (!WriteGmem) {
       using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BN, cute::_1>>;
       auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
@@ -382,14 +382,22 @@ namespace flashmoe::processor
           const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
             // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
-            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
-              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
+            // HYB61: stage TPS *before* fGET's leading barrier (serialized vs copy_fragment),
+            // keep HYB60's omitted trailing fGET sync, then one post-copy sync publishes sC.
+            // Avoids HYB60's TPS∥copy smem overlap that LOO-failed on E=8 (+15%).
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
+            __shared__ TPS fuseStIds[bM];
+            for (int i = threadIdx.x; i < bM; i += threads) {
+              fuseStIds[i] = tokenIds[i];
+            }
+            fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
+              workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
+            __syncthreads(); // sC visible; fuseStIds already published by fGET's leading sync
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
-            combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
+            combine<bM, bN, Arch, threads, combineMode, true, true>(
+              S, H, workspace, fuseStIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
             if (!threadIdx.x) {
               const auto prevBit = producerBitMap(task.localPeerIdx(), task.localExpertIdx(), mCoord, nCoord);
