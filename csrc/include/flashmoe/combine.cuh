@@ -23,8 +23,21 @@ namespace flashmoe
 #endif
   }
 
+  // NCU29: arith-roof — force FP32 FMA pipe for routing scale (sm80 has no __fmul2_rn).
+  // Not hmul2 / PreferL1 / CTA doorbell skip / racy steal.
+  __device__ __forceinline__
+  float2 float2ScaleFma(const float2& v, const float p) {
+    return float2{__fmaf_rn(v.x, p, 0.0f), __fmaf_rn(v.y, p, 0.0f)};
+  }
+
+  __device__ __forceinline__
+  float floatScaleFma(const float v, const float p) {
+    return __fmaf_rn(v, p, 0.0f);
+  }
+
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
+  // NCU29: SkipGmemLoad full-tile path uses FP32 FMA scale + unrolled vector packs.
   template <
     int bM,
     int bN,
@@ -153,7 +166,41 @@ namespace flashmoe
       constexpr auto redElemsPerThread = totalElems / threads;
       constexpr int packWidth = RVD::VectorWidth::value;
       if (tileSize == bM) {
-        for (int i = 0; i < redElemsPerThread; ++i) {
+        if constexpr (SkipGmemLoad && redElemsPerThread > 0) {
+          // NCU29: FP32 FMA scale + fully unrolled vector packs on fused full-tile path.
+#pragma unroll
+          for (int i = 0; i < redElemsPerThread; ++i) {
+            const auto idx = threadIdx.x + i * threads;
+            const auto rowIdx = idx / rbN;
+            const auto colIdx = idx % rbN;
+            const auto indexAndScale = stIds[rowIdx];
+            auto tokenValue = vsC(rowIdx, colIdx);
+            RVR scaledValue{};
+            const auto tokIdx = indexAndScale.tokenIdx;
+            const float p = indexAndScale.probability;
+            if constexpr (RAD::Width::value == 2) {
+              constexpr Converter<float2, RAT> loadOp{};
+              constexpr Converter<RAT, float2> storeOp{};
+#pragma unroll
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = storeOp(float2ScaleFma(loadOp(tokenValue[j]), p));
+              }
+            }
+            else {
+              using AccumType = cuda::std::common_type_t<float, RAT>;
+              constexpr Converter<AccumType, RAT> loadOp{};
+              constexpr Converter<RAT, AccumType> storeOp{};
+#pragma unroll
+              for (int j = 0; j < packWidth; ++j) {
+                scaledValue[j] = storeOp(floatScaleFma(loadOp(tokenValue[j]), p));
+              }
+            }
+            auto* __restrict__ tCp = (&tC(tokIdx, colIdx * packWidth));
+            constexpr RedAddOp op{};
+            op(tCp, scaledValue);
+          }
+        }
+        else for (int i = 0; i < redElemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;
