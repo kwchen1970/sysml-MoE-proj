@@ -40,9 +40,15 @@ static void testStickyAndLongPole() {
   chooseHotExperts(hist, 8, 0, 1, hot0, hot1);
   expect(hot0 == 0, "equal work does not bounce off the sticky expert");
 
+  // HYB69: soft 7/8 hysteresis — sticky=10 stays vs challenger=11 (80>=77).
   hist[3] = 11;
   chooseHotExperts(hist, 8, 0, 1, hot0, hot1);
-  expect(hot0 == 3, "strictly more work becomes the long pole");
+  expect(hot0 == 0, "HYB69: near-tie challenger does not bounce sticky0");
+  expect(hot1 == 3, "challenger still admitted as partner while sticky holds");
+
+  hist[3] = 12;
+  chooseHotExperts(hist, 8, 0, 1, hot0, hot1);
+  expect(hot0 == 3, "HYB69: ≥12.5% ahead challenger becomes the long pole");
   expect(hot1 == 0, "previous sticky expert stays second so its weights are not dropped");
 }
 

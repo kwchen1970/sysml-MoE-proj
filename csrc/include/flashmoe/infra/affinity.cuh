@@ -21,7 +21,11 @@ struct LocalQueue {
 };
 
 // hist[e] is ready tasks whose front expert is e. Ties keep the lower index.
-// A sticky expert stays primary until another expert has strictly more work.
+// HYB69: soft sticky0 hysteresis — stay primary until a challenger is ≥12.5%
+// ahead (hist[sticky]*8 >= best*7). Absorbs single-task bounce that reloads B
+// for little gain. sticky1 stays voided (HYB66/68 partner retention NO_KEEP).
+constexpr unsigned kStickyHystNum = 7;
+constexpr unsigned kStickyHystDen = 8;
 FLASHMOE_HD void chooseHotExperts(const unsigned* hist, unsigned nExperts,
                                   unsigned sticky0, unsigned sticky1,
                                   unsigned& hot0, unsigned& hot1) {
@@ -42,7 +46,8 @@ FLASHMOE_HD void chooseHotExperts(const unsigned* hist, unsigned nExperts,
     }
   }
   const bool stickyAlive = sticky0 != kNoExpert && sticky0 < nExperts && hist[sticky0] > 0;
-  if (stickyAlive && hist[sticky0] >= bestCount) {
+  if (stickyAlive &&
+      hist[sticky0] * kStickyHystDen >= bestCount * kStickyHystNum) {
     hot0 = sticky0;
   } else {
     hot0 = best;
