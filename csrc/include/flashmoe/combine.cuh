@@ -23,8 +23,48 @@ namespace flashmoe
 #endif
   }
 
+  // ARCH22: bitonic argsort of tile rows by destination tokenIdx (bM power-of-two).
+  template <int bM, int threads>
+  __device__ __forceinline__
+  void argsortRowsByToken(uint* __restrict__ ord,
+                          uint* __restrict__ keys,
+                          const TPS* __restrict__ stIds,
+                          const uint tileSize) {
+    static_assert(bM >= 2 && (bM & (bM - 1)) == 0, "ARCH22 bitonic needs power-of-two bM");
+    for (int i = threadIdx.x; i < bM; i += threads) {
+      ord[i] = static_cast<uint>(i);
+      keys[i] = (static_cast<uint>(i) < tileSize)
+                  ? static_cast<uint>(stIds[i].tokenIdx)
+                  : 0xffffffffu;
+    }
+    __syncthreads();
+    for (uint k = 2; k <= static_cast<uint>(bM); k <<= 1) {
+      for (uint j = k >> 1; j > 0; j >>= 1) {
+        for (uint i = threadIdx.x; i < static_cast<uint>(bM); i += threads) {
+          const uint ixj = i ^ j;
+          if (ixj > i) {
+            const bool ascending = ((i & k) == 0);
+            const uint ki = keys[i];
+            const uint kj = keys[ixj];
+            if ((ki > kj) == ascending) {
+              keys[i] = kj;
+              keys[ixj] = ki;
+              const uint oi = ord[i];
+              ord[i] = ord[ixj];
+              ord[ixj] = oi;
+            }
+          }
+        }
+        __syncthreads();
+      }
+    }
+  }
+
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
+  // ARCH22: SkipGmemLoad also argsorts rows by tokenIdx then RedAdd/stores in destination
+  // order (L2/TLB-friendly moeOutput traffic). ≠ on-demand TPS / densify-ids / rmem /
+  // hmul2 / bank-pad densify.
   template <
     int bM,
     int bN,
@@ -47,6 +87,7 @@ namespace flashmoe
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
     __shared__ TPS stIds[bM];
+    __shared__ uint ord[bM];
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
@@ -63,6 +104,17 @@ namespace flashmoe
       cublasdx::copy_wait();
     }
     __syncthreads();
+    if constexpr (SkipGmemLoad) {
+      // ARCH22: destination order for fused path only (identity unused on !SkipGmemLoad).
+      __shared__ uint keys[bM];
+      argsortRowsByToken<bM, threads>(ord, keys, stIds, tileSize);
+    }
+    else {
+      for (int i = threadIdx.x; i < bM; i += threads) {
+        ord[i] = static_cast<uint>(i);
+      }
+      __syncthreads();
+    }
     if constexpr (c == CombineMode::single) {
       using VTD = VectorTypeDescriptor<typename RawType<Element>::type, ElementAlignment<Element, bN>>;
       using VT = VTD::VectorType;
@@ -87,8 +139,9 @@ namespace flashmoe
       if (tileSize == bM) {
         for (int i = 0; i < elemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
-          const auto rowIdx = idx / vbN;
+          const auto sortedRow = idx / vbN;
           const auto colIdx = idx % vbN;
+          const auto rowIdx = ord[sortedRow];
           const auto tokenIdx = stIds[rowIdx].tokenIdx;
           // smem -> gmem.
           tC(tokenIdx, colIdx) = vsC(rowIdx, colIdx);
@@ -97,11 +150,12 @@ namespace flashmoe
       else {
         for (int i = 0; i < elemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
-          const auto rowIdx = idx / vbN;
+          const auto sortedRow = idx / vbN;
           const auto colIdx = idx % vbN;
-          const auto tokenIdx = stIds[rowIdx].tokenIdx;
-          // smem -> gmem.
           if (idx < actualElems) {
+            const auto rowIdx = ord[sortedRow];
+            const auto tokenIdx = stIds[rowIdx].tokenIdx;
+            // smem -> gmem.
             tC(tokenIdx, colIdx) = vsC(rowIdx, colIdx);
           }
         }
@@ -110,11 +164,12 @@ namespace flashmoe
       if constexpr (residue) {
         if (threadIdx.x < residue) {
           const auto idx = threadIdx.x + elemsPerThread * threads;
-          const auto rowIdx = idx / vbN;
+          const auto sortedRow = idx / vbN;
           const auto colIdx = idx % vbN;
-          const auto tokenIdx = stIds[rowIdx].tokenIdx;
-          // smem -> gmem.
           if (idx < actualElems) {
+            const auto rowIdx = ord[sortedRow];
+            const auto tokenIdx = stIds[rowIdx].tokenIdx;
+            // smem -> gmem.
             tC(tokenIdx, colIdx) = vsC(rowIdx, colIdx);
           }
         }
@@ -155,8 +210,9 @@ namespace flashmoe
       if (tileSize == bM) {
         for (int i = 0; i < redElemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
-          const auto rowIdx = idx / rbN;
+          const auto sortedRow = idx / rbN;
           const auto colIdx = idx % rbN;
+          const auto rowIdx = ord[sortedRow];
           const auto indexAndScale = stIds[rowIdx];
           auto tokenValue = vsC(rowIdx, colIdx);
           RVR scaledValue{};
@@ -193,8 +249,9 @@ namespace flashmoe
         for (int i = 0; i < redElemsPerThread; ++i) {
           const auto idx = threadIdx.x + i * threads;
           if (idx < actualElems) {
-            const auto rowIdx = idx / rbN;
+            const auto sortedRow = idx / rbN;
             const auto colIdx = idx % rbN;
+            const auto rowIdx = ord[sortedRow];
             const auto indexAndScale = stIds[rowIdx];
             auto tokenValue = vsC(rowIdx, colIdx);
             RVR scaledValue{};
@@ -228,13 +285,14 @@ namespace flashmoe
       if constexpr (residue) {
         if (threadIdx.x < residue) {
           const auto idx = threadIdx.x + redElemsPerThread * threads;
-          const auto rowIdx = idx / rbN;
+          const auto sortedRow = idx / rbN;
           const auto colIdx = idx % rbN;
-          const auto indexAndScale = stIds[rowIdx];
-          auto tokenValue = vsC(rowIdx, colIdx);
-          RVR scaledValue{};
-          const auto tokIdx = indexAndScale.tokenIdx;
           if (idx < actualElems) {
+            const auto rowIdx = ord[sortedRow];
+            const auto indexAndScale = stIds[rowIdx];
+            auto tokenValue = vsC(rowIdx, colIdx);
+            RVR scaledValue{};
+            const auto tokIdx = indexAndScale.tokenIdx;
             if constexpr (RAD::Width::value == 2) {
               constexpr Converter<float2, RAT> loadOp{};
               constexpr Converter<RAT, float2> storeOp{};

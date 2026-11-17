@@ -381,7 +381,7 @@ namespace flashmoe::processor
           const auto nCoord = task.tileIdx % tilesN1;
           if constexpr (topo == Topology::NVLINK_ONLY) {
             // ARCH6: GEMM1 C stays in smem → combine with SkipGmemLoad (no staging round-trip).
-            // Fixes ARCH5 S=1024 regression from extra gmem traffic on the critical path.
+            // ARCH22: destination-ordered RedAdd (tokenIdx argsort) inside fused combine.
             fGET<TileGEMM1, cublasdx::identity, Element, Element, false>(
               workspace, aP, bP, cP, biasP, task.M(), H, I, task.tileIdx);
             const auto tokenBatchStart = static_cast<uint>(mCoord) * static_cast<uint>(bM);
