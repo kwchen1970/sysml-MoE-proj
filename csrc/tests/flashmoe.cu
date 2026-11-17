@@ -800,7 +800,7 @@ void drive(const int argc, char** argv) {
   }
   // EPI31: ARCH6 tip + PreferSharedMemoryCarveout=50 (EPI17 was 100 → +0.89%).
   // Abandon pad+8/+16 keep path (EPI30 collapsed). Not PreferL1 / pS1@E16 / doorbell / steal.
-  constexpr int bN1  constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
+  constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
   constexpr int bK1 = bK0;
