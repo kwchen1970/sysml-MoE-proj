@@ -25,7 +25,8 @@ namespace flashmoe
 
   // MoE combine at tile granularity
   // ARCH6: SkipGmemLoad=true → workspace already holds the bM×bN tile (no gmem reload).
-  // NCU27: SkipGmemLoad stages stIds via 8B vector loads (keeps smem; not on-demand drop).
+  // NCU28: SkipGmemLoad full-tile path software-pipelines the next smem vector and
+  // L2-prefetches the atomic destination (keeps stIds; not 8B-TPS / pad / hmul2 / C-slab).
   template <
     int bM,
     int bN,
@@ -47,25 +48,14 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    static_assert(sizeof(TPS) == sizeof(unsigned long long) && alignof(TPS) == alignof(unsigned long long));
     __shared__ TPS stIds[bM];
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
-    if constexpr (SkipGmemLoad) {
-      // NCU27: 8-byte vectorized TPS staging (one TPS per load)
-      auto* __restrict__ dst = reinterpret_cast<unsigned long long*>(stIds);
-      const auto* __restrict__ src = reinterpret_cast<const unsigned long long*>(tokenIndices);
-      for (int i = static_cast<int>(threadIdx.x); i < bM; i += threads) {
-        dst[i] = src[i];
-      }
-    }
-    else {
-      for (int i = threadIdx.x; i < bM; i += threads) {
-        stIds[i] = tokenIndices[i];
-      }
+    for (int i = threadIdx.x; i < bM; i += threads) {
+      stIds[i] = tokenIndices[i];
     }
     if constexpr (!SkipGmemLoad) {
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
@@ -74,7 +64,6 @@ namespace flashmoe
       cublasdx::copy<threads, ElementAlignment<Element, bN>>(threadIdx.x, gC, sC);
       cublasdx::copy_wait();
     }
-    // Publishes stIds; when SkipGmemLoad also publishes ARCH6/NCU21 sC from fGET.
     __syncthreads();
     if constexpr (c == CombineMode::single) {
       using VTD = VectorTypeDescriptor<typename RawType<Element>::type, ElementAlignment<Element, bN>>;
@@ -166,17 +155,18 @@ namespace flashmoe
       constexpr auto redElemsPerThread = totalElems / threads;
       constexpr int packWidth = RVD::VectorWidth::value;
       if (tileSize == bM) {
-        // NCU27: unroll fused full-tile reduce (known small trip count).
-        if constexpr (SkipGmemLoad) {
-#pragma unroll
+        if constexpr (SkipGmemLoad && redElemsPerThread > 0) {
+          // NCU28: hide red.global latency — prefetch next smem C + L2-hint atomic dst.
+          int idx = static_cast<int>(threadIdx.x);
+          int rowIdx = idx / rbN;
+          int colIdx = idx % rbN;
+          auto indexAndScale = stIds[rowIdx];
+          auto tokenValue = vsC(rowIdx, colIdx);
           for (int i = 0; i < redElemsPerThread; ++i) {
-            const auto idx = threadIdx.x + i * threads;
-            const auto rowIdx = idx / rbN;
-            const auto colIdx = idx % rbN;
-            const auto indexAndScale = stIds[rowIdx];
-            auto tokenValue = vsC(rowIdx, colIdx);
-            RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
+            auto* __restrict__ tCp = (&tC(tokIdx, colIdx * packWidth));
+            asm volatile("prefetch.global.L2 [%0];" :: "l"(tCp) : "memory");
+            RVR scaledValue{};
             if constexpr (RAD::Width::value == 2) {
               constexpr Converter<float2, RAT> loadOp{};
               constexpr Converter<RAT, float2> storeOp{};
@@ -195,7 +185,13 @@ namespace flashmoe
                 scaledValue[j] = storeOp(loadOp(tokenValue[j]) * indexAndScale.probability);
               }
             }
-            auto* __restrict__ tCp = (&tC(tokIdx, colIdx * packWidth));
+            if (i + 1 < redElemsPerThread) {
+              idx = static_cast<int>(threadIdx.x) + (i + 1) * threads;
+              rowIdx = idx / rbN;
+              colIdx = idx % rbN;
+              indexAndScale = stIds[rowIdx];
+              tokenValue = vsC(rowIdx, colIdx);
+            }
             constexpr RedAddOp op{};
             op(tCp, scaledValue);
           }

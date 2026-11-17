@@ -67,8 +67,7 @@ namespace flashmoe::processor
       auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
       __syncthreads();
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
-      // NCU21: skip trailing syncthreads — fused combine (SkipGmemLoad) syncs
-      // after token-id staging, which also publishes this sC write.
+      __syncthreads();
     }
     else {
       auto gC = tile::getC<BM{}, BN{}, cublasdx::arrangement_of_v_c<BLAS>>(c, M, N, cute::select<0, 1>(tileCoord));
