@@ -334,6 +334,37 @@ namespace flashmoe::processor
           const auto* bP = expertUpWeights + expertWeightSize * task.localExpertIdx();
           auto* __restrict__ cP = reinterpret_cast<Element*>(task.cData[0]);
           const auto* __restrict__ biasP = biasUp + static_cast<size_t>(I) * task.localExpertIdx();
+          // NCU40: L2-prefetch this expert's Up (+UpV) weights at GEMM0 entry
+          // to cut L1TEX long-scoreboard on weight-stationary Up B. ≠ NCU37
+          // single-hot, ≠ NCU38 Down handoff, ≠ NCU39 AccessPolicy persist.
+          {
+            constexpr size_t kPrefetchBytes = 512 * 1024;
+            constexpr int lineElems = static_cast<int>(128 / sizeof(Element));
+            const size_t prefElems =
+              expertWeightSize < (kPrefetchBytes / sizeof(Element))
+                ? expertWeightSize
+                : (kPrefetchBytes / sizeof(Element));
+            for (size_t i = static_cast<size_t>(threadIdx.x) * lineElems; i < prefElems;
+                 i += static_cast<size_t>(threads) * lineElems) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+              asm volatile("prefetch.global.L2 [%0];" ::"l"(bP + i) : "memory");
+#else
+              (void)(bP + i);
+#endif
+            }
+            if constexpr (mt == MLPMatmulType::gated) {
+              const auto* __restrict__ upV =
+                expertUpVWeights + expertWeightSize * task.localExpertIdx();
+              for (size_t i = static_cast<size_t>(threadIdx.x) * lineElems; i < prefElems;
+                   i += static_cast<size_t>(threads) * lineElems) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+                asm volatile("prefetch.global.L2 [%0];" ::"l"(upV + i) : "memory");
+#else
+                (void)(upV + i);
+#endif
+              }
+            }
+          }
           if constexpr (mt == MLPMatmulType::vanilla) {
             fGET<TileGEMM0, Activation>(workspace, aP, bP, cP, biasP, task.M(), I, H, task.tileIdx);
           }
