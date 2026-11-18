@@ -377,8 +377,10 @@ void kickstart(const Options& opts) {
     ? sizeof(Element) * bM * bN0 : 0;
   constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
     + gateCacheBytes, flashmoe::MAX_ALIGNMENT);
+  // EPI45: mirror fuse C+TPS dynamic budget used by kernelSMEM.
+  constexpr auto fuseCBytes = cutlass::round_up(sizeof(Element) * bM * bN1, alignof(flashmoe::TPS));
   constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
-    sizeof(Element) * bM * bN1), flashmoe::MAX_ALIGNMENT);
+    fuseCBytes + sizeof(flashmoe::TPS) * bM), flashmoe::MAX_ALIGNMENT);
 
   const auto kernelSz = flashmoe::moe::kernelSMEM<Config>(opts.E, opts.EC, world, numLocalExperts, tilesN1);
   int maxSharedMemory = 0;
@@ -794,9 +796,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI44: soft __launch_bounds__(.,2) occupancy. Abandon EPI43 warp-TPS (+0.56%).
-  // Shared-A pS0=2, dispatch 75%, full stIds staging. Keep MAX_PROCESSORS schedCap.
-  // No TPS family / pad+8 / dispatch50 / PreferL1 / carveout / pS0=1.
+  // EPI45: park fuse TPS after C in dynamic smem (drop static stIds). Abandon EPI44
+  // launch_bounds(.,2) near-noise. Shared-A pS0=2, dispatch 75%, bounds=1, schedCap.
+  // ≠ warp-TPS / pad+8 / dispatch50 / PreferL1 / carveout / pS0=1.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -867,7 +869,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI44: ARCH6 shared-A pS0=2 + soft launch_bounds(.,2).
+    // EPI45: ARCH6 shared-A pS0=2 + dynamic TPS after fuse C.
     launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});

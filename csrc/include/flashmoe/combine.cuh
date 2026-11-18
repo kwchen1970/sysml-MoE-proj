@@ -46,7 +46,16 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    __shared__ TPS stIds[bM];
+    // EPI45: on SkipGmemLoad, park TPS after C in dynamic workspace (drop static stIds[bM]).
+    // Occupancy via smem layout — ≠ launch_bounds / warp-TPS / pad+8 / dispatch50.
+    __shared__ TPS stIdsStatic[SkipGmemLoad ? 1 : bM];
+    TPS* __restrict__ stIds;
+    if constexpr (SkipGmemLoad) {
+      constexpr size_t cBytes = cutlass::round_up(sizeof(Element) * bM * bN, alignof(TPS));
+      stIds = reinterpret_cast<TPS*>(static_cast<cuda::std::byte*>(workspace) + cBytes);
+    } else {
+      stIds = stIdsStatic;
+    }
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
