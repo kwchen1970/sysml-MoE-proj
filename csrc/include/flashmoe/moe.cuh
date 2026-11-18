@@ -173,8 +173,9 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI43: bounds=1. Keep schedCap + dispatch 75%. Warp-rounded TPS staging on fuse path.
-  __launch_bounds__(Config::Threads::value, 1)
+  // EPI44: soft launch_bounds(.,2) for occupancy (ARCH6 #1). Keep schedCap + dispatch 75%.
+  // ≠ TPS family / pad+8 / dispatch50 / pS0=1 / PreferL1 / carveout.
+  __launch_bounds__(Config::Threads::value, 2)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;

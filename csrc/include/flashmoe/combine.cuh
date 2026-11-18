@@ -52,18 +52,10 @@ namespace flashmoe
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
-    // EPI43: SkipGmemLoad stages warp-rounded TPS rows — ceil(tileSize/32)*32, capped at bM.
-    // Near EPI39 (−0.97%) / EPI41 (−0.57%) without exact tileSize or live-gmem rematch.
-    if constexpr (SkipGmemLoad) {
-      const int nTok = static_cast<int>(
-        cute::min(static_cast<uint>(bM), ((tileSize + 31u) / 32u) * 32u));
-      for (int i = threadIdx.x; i < nTok; i += threads) {
-        stIds[i] = tokenIndices[i];
-      }
-    } else {
-      for (int i = threadIdx.x; i < bM; i += threads) {
-        stIds[i] = tokenIndices[i];
-      }
+    for (int i = threadIdx.x; i < bM; i += threads) {
+      stIds[i] = tokenIndices[i];
+    }
+    if constexpr (!SkipGmemLoad) {
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
       static_assert(cute::is_compatible<decltype(gC.layout()), decltype(sC.layout())>::value);
       // copy processed tile from gmem -> smem
