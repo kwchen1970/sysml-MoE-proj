@@ -173,7 +173,7 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI40: bounds=1. Keep schedCap + dispatch 75%. Drop pre-copy fuse barrier.
+  // EPI41: bounds=1. Keep schedCap + dispatch 75%. SkipGmemLoad live TPS (no stIds smem).
   __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();

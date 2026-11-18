@@ -794,8 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI40: drop pre-copy fuse syncthreads (!WriteGmem). Abandon EPI39 tileSize TPS
-  // (MARGINAL −0.97%). Shared-A pS0=2, dispatch 75%. No pad+8 / Up@GEMM0 / dispatch50.
+  // EPI41: SkipGmemLoad reads TPS live from gmem (drop stIds[bM] smem). EPI39 near-miss
+  // variant without tileSize staging rematch. Shared-A pS0=2, dispatch 75%.
+  // No pre-copy-skip / pad+8 / Up@GEMM0 / dispatch50 / PreferL1 / carveout / pS0=1.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -866,7 +867,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI40: ARCH6 shared-A pS0=2 + skip pre-copy fuse barrier.
+    // EPI41: ARCH6 shared-A pS0=2 + SkipGmemLoad live TPS (no stIds smem).
     launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
