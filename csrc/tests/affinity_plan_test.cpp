@@ -137,6 +137,18 @@ static void testNarrowToLongPole() {
   expect(hot1 == 1, "a long pole that cannot fill the CTAs keeps its partner");
 }
 
+// HYB80: partner fills the hot budget before primary.
+static void testPartnerFirst() {
+  LocalQueue queues[2] = {
+    LocalQueue{0, 20, false},  // hot0 primary
+    LocalQueue{1, 20, false},  // hot1 partner
+  };
+  unsigned take[2] = {};
+  assignQueues(queues, 2, 0, 1, 8, 0, take);
+  expect(take[1] == 8, "partner-first spends the hot budget on hot1");
+  expect(take[0] == 0, "primary waits when partner consumed the budget");
+}
+
 int main() {
   testClamp();
   testStickyAndLongPole();
@@ -144,6 +156,7 @@ int main() {
   testAdmitColdWhenShort();
   testGlobalQueueIsWhole();
   testNarrowToLongPole();
+  testPartnerFirst();
   if (failures) {
     std::printf("%d failure(s)\n", failures);
     return 1;
