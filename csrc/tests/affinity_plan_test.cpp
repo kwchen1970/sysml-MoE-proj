@@ -130,11 +130,17 @@ static void testNarrowToLongPole() {
   unsigned hist[4] = {40, 12, 3, 0};
   unsigned hot0 = 0;
   unsigned hot1 = 1;
+  // HYB74: 40 >= 32 and 12*2 < 40 → drop tiny partner.
   narrowToLongPole(hist, hot0, hot1, 32);
-  expect(hot1 == kNoExpert, "a long pole that fills the CTAs drops its partner");
+  expect(hot1 == kNoExpert, "HYB74: filling pole drops a much-smaller partner");
+  hist[1] = 25;
+  hot1 = 1;
+  narrowToLongPole(hist, hot0, hot1, 32);
+  expect(hot1 == 1, "HYB74: filling pole keeps a substantial partner (25*2 >= 40)");
+  hist[1] = 12;
   hot1 = 1;
   narrowToLongPole(hist, hot0, hot1, 48);
-  expect(hot1 == 1, "a long pole that cannot fill the CTAs keeps its partner");
+  expect(hot1 == 1, "HYB74: a short long pole keeps its partner");
 }
 
 int main() {
