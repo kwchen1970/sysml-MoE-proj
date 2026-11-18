@@ -173,8 +173,9 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI47: bounds=1. Dispatch CTA share 75%→62.5% (5/8). Abandon EPI46 pS1=2 rematch.
-  // ≠ warp-TPS / launch_bounds / dyn TPS / pS1=2 / EPI38 dispatch50 / PreferL1 / pS0=1.
+  // NCU53 on EPI47 KEEP: dispatch CTA share 62.5%→56.25% (9/16). Bounds=1.
+  // Between EPI47 KEEP (5/8) and EPI38 MARGINAL (50%). ≠ soft bounds=2 (NCU52
+  // SMOKE_FAIL) / PreferL1 / pS0=1 / AccessPolicy / L2 / bK128 / pS deepen / A-prefetch.
   __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
@@ -200,7 +201,7 @@ namespace flashmoe::moe
       ctx.symHeap, ctx.nLx, roundEC, kArgs.H, sizeof(DataType)
     };
     const auto processors = gridDim.x - 1;
-    const auto dispatchProcessors = cute::max((processors * 5) / 8, 1); // EPI47: 62.5%
+    const auto dispatchProcessors = cute::max((processors * 9) / 16, 1); // NCU53: 56.25%
     const auto superBlockSize = min(dispatchSuperBlockSize(kArgs.E), dispatchProcessors);
     const auto dispatchBlocks = cuda::round_down(cute::min(superBlockSize * kArgs.E, MAX_DISPATCH_BLOCKS, dispatchProcessors), superBlockSize);
     if (blockIdx.x == gridDim.x - 1) {
