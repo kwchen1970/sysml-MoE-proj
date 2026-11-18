@@ -173,8 +173,8 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI46: bounds=1. Shared-A GEMM1 pS1=2 (deeper Down async K / scoreboard).
-  // Abandon EPI45 dyn TPS. ≠ warp-TPS / launch_bounds(.,2) / SkipGmemLoad dyn TPS / pS0=1 / NCU47 pS0=3.
+  // EPI47: bounds=1. Dispatch CTA share 75%→62.5% (5/8). Abandon EPI46 pS1=2 rematch.
+  // ≠ warp-TPS / launch_bounds / dyn TPS / pS1=2 / EPI38 dispatch50 / PreferL1 / pS0=1.
   __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
@@ -200,7 +200,7 @@ namespace flashmoe::moe
       ctx.symHeap, ctx.nLx, roundEC, kArgs.H, sizeof(DataType)
     };
     const auto processors = gridDim.x - 1;
-    const auto dispatchProcessors = cute::max((processors * 3) / 4, 1); // 75%
+    const auto dispatchProcessors = cute::max((processors * 5) / 8, 1); // EPI47: 62.5%
     const auto superBlockSize = min(dispatchSuperBlockSize(kArgs.E), dispatchProcessors);
     const auto dispatchBlocks = cuda::round_down(cute::min(superBlockSize * kArgs.E, MAX_DISPATCH_BLOCKS, dispatchProcessors), superBlockSize);
     if (blockIdx.x == gridDim.x - 1) {
