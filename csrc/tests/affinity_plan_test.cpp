@@ -61,7 +61,9 @@ static void testAdmitAndCap() {
   LocalQueue queues[32];
   for (unsigned t = 0; t < 32; ++t) {
     queues[t] = LocalQueue{t % 4, 20, false};
-    if (isHotExpert(queues[t].expert, hot0, hot1)) {
+    // Budget for primary only: HYB75 blocks partner GEMM0, so the fill-slots
+    // check uses a single-hot wave (hot1 = kNoExpert).
+    if (queues[t].expert == hot0) {
       hotLocal[t] = 20;
     } else {
       coldLocal[t] = 20;
@@ -77,15 +79,16 @@ static void testAdmitAndCap() {
   unsigned issuedCold = 0;
   for (unsigned t = 0; t < 32; ++t) {
     unsigned take = 0;
-    assignQueues(&queues[t], 1, hot0, hot1, hotBudget[t], coldBudget[t], &take);
-    if (isHotExpert(queues[t].expert, hot0, hot1)) {
+    assignQueues(&queues[t], 1, hot0, kNoExpert, hotBudget[t], coldBudget[t], &take);
+    if (queues[t].expert == hot0) {
       issuedHot += take;
     } else {
       issuedCold += take;
     }
   }
-  expect(issuedCold == 0, "cold experts wait while the hot pair fills every CTA");
+  expect(issuedCold == 0, "cold experts wait while the hot primary fills every CTA");
   expect(issuedHot == slots, "the wave size is the number of free CTAs");
+  (void)hot1;
 }
 
 static void testAdmitColdWhenShort() {
@@ -126,6 +129,20 @@ static void testGlobalQueueIsWhole() {
   expect(take == 0, "a zero budget leaves the one-shot queue untouched");
 }
 
+static void testPartnerGemm1Only() {
+  // HYB75: hot1 local/GEMM0 blocked; hot1 global and hot0 local still issue.
+  LocalQueue queues[3] = {
+    LocalQueue{1, 8, false}, // partner GEMM0 — blocked
+    LocalQueue{1, 4, true},  // partner GEMM1 — allowed
+    LocalQueue{0, 8, false}, // primary GEMM0 — allowed
+  };
+  unsigned take[3] = {};
+  assignQueues(queues, 3, /*hot0=*/0, /*hot1=*/1, /*hotBudget=*/20, /*coldBudget=*/0, take);
+  expect(take[0] == 0, "HYB75: partner GEMM0 is not issued");
+  expect(take[1] == 4, "HYB75: partner GEMM1 drains");
+  expect(take[2] == 8, "HYB75: primary GEMM0 still issues");
+}
+
 static void testNarrowToLongPole() {
   unsigned hist[4] = {40, 12, 3, 0};
   unsigned hot0 = 0;
@@ -143,6 +160,7 @@ int main() {
   testAdmitAndCap();
   testAdmitColdWhenShort();
   testGlobalQueueIsWhole();
+  testPartnerGemm1Only();
   testNarrowToLongPole();
   if (failures) {
     std::printf("%d failure(s)\n", failures);

@@ -92,6 +92,9 @@ FLASHMOE_HD void clampToSlots(const unsigned* local, unsigned n, unsigned slots,
 // Global queues are taken whole so a one-shot head is never split.
 // Subscriber queues may be taken partially. Global queues are preferred
 // inside a budget so a finished GEMM1 is not stuck behind more GEMM0.
+// HYB75: partner (hot1) may only drain GEMM1/global — block hot1 GEMM0 so
+// the secondary does not reload B; primary hot0 keeps full local+global.
+// Not asym-longpole, no-cold, dual-hot, hot0-first, soft sticky0, cold-GEMM1.
 FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
                               unsigned hot0, unsigned hot1,
                               unsigned hotBudget, unsigned coldBudget,
@@ -104,6 +107,10 @@ FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
     for (unsigned i = 0; i < nq; ++i) {
       const LocalQueue& q = queues[i];
       if (q.tasks == 0 || q.globalQueue != wantGlobal || !isHotExpert(q.expert, hot0, hot1)) {
+        continue;
+      }
+      // Partner finish-only: skip hot1 subscriber/GEMM0 work.
+      if (hot1 != kNoExpert && q.expert == hot1 && !q.globalQueue) {
         continue;
       }
       if (hotBudget == 0) {

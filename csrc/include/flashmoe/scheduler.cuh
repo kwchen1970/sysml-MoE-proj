@@ -428,7 +428,10 @@ namespace flashmoe::scheduler
           continue;
         }
         if (isHotExpert(local[i].expert, hot0, hot1)) {
-          hotLocal += local[i].tasks;
+          // HYB75: partner GEMM0 is not issued — do not reserve hot budget for it.
+          if (!(hot1 != kNoExpert && local[i].expert == hot1 && !local[i].globalQueue)) {
+            hotLocal += local[i].tasks;
+          }
         } else {
           coldLocal += local[i].tasks;
         }
