@@ -794,9 +794,10 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // NCU10: shared-A ElementC reg-gate frees gateCache; spend that smem on
-  // GEMM0 pS=2 (L1TEX pipeline depth) while keeping 2 blocks/SM. Two-pass
-  // stays HYB17 (pS=1 + gateCache). GEMM1 stays pS=1.
+  // ARCH33: shared-A GEMM0 bN0=32 (keep pS0=2 / bK0=64) cuts Up AB+C smem via
+  // N-tile for occupancy (#1). ≠ toxic GEMM1 bK1=32 / GEMM0 bK32 / pS1=2 /
+  // phase-balance / col-major / sequential shared-A / AccessPolicy / PreferL1.
+  // Two-pass stays HYB17 (pS=1 + gateCache). GEMM1 stays pS=1 / bN1=128.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -867,7 +868,8 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{}, cute::Int<2>{}); // NCU10: deepen shared-A K pipeline
+    // ARCH33: narrower shared-A N-tile (bN0=32) + keep NCU10 pS0=2 depth.
+    launch(cute::Int<32>{}, cute::Int<2>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
   }
