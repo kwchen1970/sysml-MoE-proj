@@ -173,9 +173,10 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI47: bounds=1. Dispatch CTA share 75%→62.5% (5/8). Abandon EPI46 pS1=2 rematch.
-  // ≠ warp-TPS / launch_bounds / dyn TPS / pS1=2 / EPI38 dispatch50 / PreferL1 / pS0=1.
-  __launch_bounds__(Config::Threads::value, 1)
+  // NCU52 on EPI47 KEEP: soft __launch_bounds__(.,2) for occupancy (regs→2 CTA/SM).
+  // Keep dispatch 62.5%, shared-A pS0=2, default pS1. ≠ PreferL1 / pS0=1 / bounds≥3 /
+  // AccessPolicy / L2 pref / bK128 / sync elision / pS deepen / EPI48 A-prefetch.
+  __launch_bounds__(Config::Threads::value, 2)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
