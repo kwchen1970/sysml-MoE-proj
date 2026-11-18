@@ -794,9 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // NCU10: shared-A ElementC reg-gate frees gateCache; spend that smem on
-  // GEMM0 pS=2 (L1TEX pipeline depth) while keeping 2 blocks/SM. Two-pass
-  // stays HYB17 (pS=1 + gateCache). GEMM1 stays pS=1.
+  // NCU41: deepen shared-A GEMM1 async K (pS1=2) to hide Down-proj L1TEX
+  // long-scoreboard. Keeps NCU10 pS0=2; two-pass stays pS=1. ≠ AccessPolicy /
+  // Down handoff / Up GEMM0 pref / single-hot (NCU37–40).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -818,10 +818,10 @@ void drive(const int argc, char** argv) {
   // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
     && I < 4096 && k <= 2);
-  auto launch = [&](auto bN0C, auto pS0C) {
+  auto launch = [&](auto bN0C, auto pS0C, auto pS1C) {
     constexpr int bN0 = decltype(bN0C)::value;
     constexpr int pS0 = decltype(pS0C)::value;
-    constexpr int pS1 = pS; // GEMM1: keep gated default
+    constexpr int pS1 = decltype(pS1C)::value;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
     }
@@ -867,9 +867,10 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{}, cute::Int<2>{}); // NCU10: deepen shared-A K pipeline
+    // NCU41: pS0=2 (NCU10) + deepen GEMM1 async K to pS1=2.
+    launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<2>{});
   } else {
-    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
+    launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
   }
 }
 
