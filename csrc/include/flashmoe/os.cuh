@@ -149,8 +149,13 @@ namespace flashmoe::os
     auto* __restrict__ eCs = reinterpret_cast<int*>(scratch);
     if (!threadIdx.x) {
       // Expert computation expectant tasks
-      // actual amount unknown a priori, so we use upper bound and self-correct at runtime
-      *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + tilesN1);
+      // actual amount unknown a priori, so we use upper bound and self-correct at runtime.
+      // ARCH35 NVLINK: one scheduled GEMM1 strip task per M-row (not tilesN1 singles).
+      if constexpr (topo == Topology::NVLINK_ONLY) {
+        *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + 1);
+      } else {
+        *taskBound = ctx.nLx * ctx.world * ecTilesM * (tilesN0 + tilesN1);
+      }
     }
     for (uint i = threadIdx.x; i < E; i += threads) {
       eCs[i] = expertCounts[i];

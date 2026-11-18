@@ -206,13 +206,19 @@ namespace flashmoe::subscriber
     final
   };
 
-  // Self-correct Termination Bound
+  // Self-correct Termination Bound.
+  // ARCH35: NVLINK schedules one GEMM1 strip per M-row → perRow = tilesN0 + 1.
   __device__ __forceinline__
-  void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0) {
+  void sTB(const Args& args, const int& peer, const int& peerTaskTiles, const uint perRow) {
     if (!atomicTAS<cuda::thread_scope_block>(args.status + peer)) {
-      const auto superfluous = (args.tilesN0 + args.tilesN1) * ((args.nLx * args.ecTilesM) - peerTaskTiles);
+      const auto superfluous = perRow * ((args.nLx * args.ecTilesM) - peerTaskTiles);
       atomicSub_block(args.taskCount, superfluous);
     }
+  }
+
+  __device__ __forceinline__
+  void sTB(const Args& args, const int& peer, const int& peerTaskTiles = 0) {
+    sTB(args, peer, peerTaskTiles, args.tilesN0 + args.tilesN1);
   }
 
   template <
@@ -251,6 +257,9 @@ namespace flashmoe::subscriber
         if (laneId == 0) {
           auto visitedSet = bitSet[warpId + vSIdx * sNW];
           if (!visitedSet.get(vIdx)) {
+            // ARCH35: NVLINK schedules one GEMM1 strip/row → tilesN0+1 expectant.
+            const uint expectPerRow = (topo == Topology::NVLINK_ONLY)
+              ? (args.tilesN0 + 1u) : (args.tilesN0 + args.tilesN1);
             if (topo == Topology::MIXED && pLI.isRemote) {
               // RDMA peer
               signal = nvshmem_signal_fetch(flags + flagIdx);
@@ -258,7 +267,7 @@ namespace flashmoe::subscriber
               if (sigPayload.stateNumber == currentStateNumber) {
                 // set visited bit
                 // self-correct the termination bound
-                sTB(args, peerIdx, sigPayload.totalTilesM);
+                sTB(args, peerIdx, sigPayload.totalTilesM, expectPerRow);
                 visitedSet.set(vIdx);
 
                 // enforce memory consistency of expected packet
@@ -289,7 +298,7 @@ namespace flashmoe::subscriber
                 Thus, as we catch up to them, we self-correct
                 our termination bound to avoid a deadlock.
                 */
-                sTB(args, peerIdx);
+                sTB(args, peerIdx, 0, expectPerRow);
                 // set visited bit
                 visitedSet.set(vIdx);
               }
@@ -300,11 +309,11 @@ namespace flashmoe::subscriber
               signal = f.load(cuda::memory_order::acquire);
               const auto sigPayload = cuda::std::bit_cast<SignalPayload<PacketStage::initial>>(signal);
               if (sigPayload.stateNumber == currentStateNumber) {
-                sTB(args, peerIdx, sigPayload.totalTilesM);
+                sTB(args, peerIdx, sigPayload.totalTilesM, expectPerRow);
                 visitedSet.set(vIdx);
               }
               else if (sbs::ahead(sigPayload.stateNumber, currentStateNumber)) {
-                sTB(args, peerIdx);
+                sTB(args, peerIdx, 0, expectPerRow);
                 // set visited bit
                 visitedSet.set(vIdx);
               }
