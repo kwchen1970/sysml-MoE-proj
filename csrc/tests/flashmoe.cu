@@ -794,9 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI42: L2-prefetch TPS before fuse combine (keep full stIds staging). Abandon EPI41
-  // live-TPS (MARGINAL −0.57%). Shared-A pS0=2, dispatch 75%.
-  // No tileSize TPS / pre-copy-skip / pad+8 / Up@GEMM0 / dispatch50 / PreferL1 / pS0=1.
+  // EPI43: SkipGmemLoad warp-rounded TPS staging (ceil(tileSize/32)*32). Near EPI39/41
+  // without exact tileSize / live-gmem rematch. Shared-A pS0=2, dispatch 75%.
+  // No TPS L2-pref / pre-copy-skip / pad+8 / dispatch50 / PreferL1 / pS0=1.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -867,7 +867,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI42: ARCH6 shared-A pS0=2 + TPS L2-prefetch before fuse combine.
+    // EPI43: ARCH6 shared-A pS0=2 + warp-rounded TPS staging on fuse combine.
     launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
