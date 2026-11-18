@@ -137,6 +137,27 @@ static void testNarrowToLongPole() {
   expect(hot1 == 1, "a long pole that cannot fill the CTAs keeps its partner");
 }
 
+// HYB81: cold budget spends on local before global; hot still prefers global.
+static void testColdLocalFirst() {
+  LocalQueue cold[2] = {
+    LocalQueue{3, 20, false},  // cold local
+    LocalQueue{3, 20, true},   // cold global
+  };
+  unsigned take[2] = {};
+  assignQueues(cold, 2, 0, 1, 0, 8, take);
+  expect(take[0] == 8, "cold-local-first spends cold budget on GEMM0");
+  expect(take[1] == 0, "cold GEMM1 waits when local consumed the cold budget");
+
+  LocalQueue hot[2] = {
+    LocalQueue{0, 20, false},  // hot0 local
+    LocalQueue{0, 20, true},   // hot0 global
+  };
+  take[0] = take[1] = 0;
+  assignQueues(hot, 2, 0, kNoExpert, 8, 0, take);
+  expect(take[1] == 20, "hot still takes GEMM1 whole first");
+  expect(take[0] == 0, "hot local waits when global consumed the hot budget");
+}
+
 int main() {
   testClamp();
   testStickyAndLongPole();
@@ -144,6 +165,7 @@ int main() {
   testAdmitColdWhenShort();
   testGlobalQueueIsWhole();
   testNarrowToLongPole();
+  testColdLocalFirst();
   if (failures) {
     std::printf("%d failure(s)\n", failures);
     return 1;

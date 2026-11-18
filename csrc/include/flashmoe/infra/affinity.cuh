@@ -91,7 +91,11 @@ FLASHMOE_HD void clampToSlots(const unsigned* local, unsigned n, unsigned slots,
 // Spend hotBudget on hot queues and coldBudget on the rest.
 // Global queues are taken whole so a one-shot head is never split.
 // Subscriber queues may be taken partially. Global queues are preferred
-// inside a budget so a finished GEMM1 is not stuck behind more GEMM0.
+// inside a hot budget so a finished GEMM1 is not stuck behind more GEMM0.
+// HYB81: cold budget prefers local/GEMM0 before GEMM1 so a cold fill-in
+// drains Up without reloading Down B first. Hot keeps default global-first.
+// Orthogonal to HYB76 (both budgets local-first), HYB70 (cold GEMM1-only),
+// partner-first, hot-split, mild/asym longpole, soft sticky, dual-hot.
 FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
                               unsigned hot0, unsigned hot1,
                               unsigned hotBudget, unsigned coldBudget,
@@ -122,7 +126,8 @@ FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
     }
   }
   for (unsigned pass = 0; pass < 2; ++pass) {
-    const bool wantGlobal = pass == 0;
+    // Cold: local first (pass 0), then global (pass 1).
+    const bool wantGlobal = pass == 1;
     for (unsigned i = 0; i < nq; ++i) {
       const LocalQueue& q = queues[i];
       if (q.tasks == 0 || q.globalQueue != wantGlobal || take[i] != 0 ||
