@@ -797,6 +797,9 @@ void drive(const int argc, char** argv) {
   // NCU10: shared-A ElementC reg-gate frees gateCache; spend that smem on
   // GEMM0 pS=2 (L1TEX pipeline depth) while keeping 2 blocks/SM. Two-pass
   // stays HYB17 (pS=1 + gateCache). GEMM1 stays pS=1.
+  // NCU45: raise k cap 2→6 on mid-I shared-A so the anchor (k=6) gets
+  // pS0=2 dual-accum instead of two-pass pS=1. Orthogonal to NCU44 any-I
+  // (k<=2). ≠ AccessPolicy / L2 prefs / single-hot / pS1=2 / bN0=32.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -815,9 +818,9 @@ void drive(const int argc, char** argv) {
   if (E != 8 && E != 16 && E != 32 && E % 32 != 0) {
     throw std::invalid_argument("E must be 8, 16, 32, or a multiple of 32 for this benchmark");
   }
-  // Shared-A helps mid-I k=2 sweeps; at k=6 (anchor) dual-accum is slower.
+  // NCU45: mid-I shared-A through k<=6 (anchor); large-I stays two-pass.
   const bool useSharedA = (mt == flashmoe::MLPMatmulType::gated && arch >= 800 && sizeof(Element) == 2
-    && I < 4096 && k <= 2);
+    && I < 4096 && k <= 6);
   auto launch = [&](auto bN0C, auto pS0C) {
     constexpr int bN0 = decltype(bN0C)::value;
     constexpr int pS0 = decltype(pS0C)::value;
