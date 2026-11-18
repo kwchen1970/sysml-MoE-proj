@@ -394,11 +394,14 @@ void kickstart(const Options& opts) {
   if (kernelTopo == flashmoe::Topology::NVLINK_ONLY) {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::NVLINK_ONLY>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
+    // NCU54: PreferSharedMemoryCarveout=75 on EPI47 (between EPI17=100 / EPI31=50).
+    CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, 75));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
   else {
     auto kernel = flashmoe::moe::forward<Config, act, flashmoe::Topology::MIXED>;
     CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kernelSz));
+    CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, 75));
     CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, kernel, threads, kernelSz));
   }
 
@@ -794,9 +797,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI47: dispatch 62.5% (5/8). Abandon EPI46 pS1=2 (MARGINAL −0.595%; ARCH31/NCU41 rematch).
-  // Keep shared-A pS0=2, pS1=default, bounds=1, schedCap, full stIds.
-  // ≠ warp-TPS / launch_bounds / dyn TPS / pS1=2 / EPI38 dispatch50 / PreferL1 / pS0=1.
+  // NCU54: PreferSharedMemoryCarveout=75 on EPI47 tip (dispatch 62.5%, bounds=1).
+  // Host-only; between EPI17=100 and EPI31=50. ≠ soft bounds / dispatch 9/16 / PreferL1 /
+  // AccessPolicy / L2 / bK128 / pS deepen / A-prefetch / EPI50 skip fuse sync.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -867,7 +870,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI47: ARCH6 shared-A pS0=2 + gated default pS1; dispatch 62.5% in moe::forward.
+    // NCU54/EPI47: shared-A pS0=2 + gated default pS1; carveout=75; dispatch 62.5%.
     launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});

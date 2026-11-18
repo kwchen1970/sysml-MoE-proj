@@ -173,8 +173,8 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI47: bounds=1. Dispatch CTA share 75%→62.5% (5/8). Abandon EPI46 pS1=2 rematch.
-  // ≠ warp-TPS / launch_bounds / dyn TPS / pS1=2 / EPI38 dispatch50 / PreferL1 / pS0=1.
+  // NCU54 on EPI47 KEEP: bounds=1, dispatch 62.5% locked. Carveout=75 in flashmoe.cu.
+  // ≠ soft bounds (NCU52/EPI49) / dispatch 9/16 (NCU53 SMOKE) / PreferL1 / AccessPolicy.
   __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
