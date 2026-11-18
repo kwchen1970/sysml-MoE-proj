@@ -62,10 +62,12 @@ namespace flashmoe::processor
       d_frag(i) = storeConv(act(c_frag(i) + loadConv(d_frag(i))));
     });
     // rmem -> smem (combine-compatible dense row-major when !WriteGmem)
+    // EPI40: skip pre-copy CTA barrier on fuse path — d_frag is register-local and
+    // copy_fragment partitions C without overlap. Keep post-copy sync for combine.
+    // ≠ EPI25 (dropped post-sync), ≠ EPI39 tileSize TPS, ≠ pad+8 / dispatch50.
     if constexpr (!WriteGmem) {
       using SCL = cute::Layout<cute::Shape<BM, BN>, cute::Stride<BN, cute::_1>>;
       auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<ElementC*>(workspace)), SCL{});
-      __syncthreads();
       cublasdx::copy_fragment<cublasdx::alignment_of<BLAS>::c>(d_frag, sC, accumulator);
       __syncthreads();
     }
