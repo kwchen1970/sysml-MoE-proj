@@ -432,13 +432,16 @@ namespace flashmoe::tile
         cpFence();
       });
       // mainloop
+      // NCU50: elide post-MMA CTA sync before next-K cp.async. Issue gmem loads
+      // immediately after CollectiveMainloop MMA returns so L1TEX long-scoreboard
+      // overlaps earlier — same pipeStages (no deeper staging). ≠ AccessPolicy /
+      // L2 pref / shared-A coverage / col-major / pS deepen / twopass pS.
       for (int kStage = pipeStages; kStage < tilesK; ++kStage) {
         const int ps = kStage % pipeStages;
         update_buffer<sASS>(sA, sAP, ps);
         update_buffer<sBSS>(sB, sBP, ps);
         cpWait<pipeStages - 1>();
         BLAS().execute(sA, sB, accumulator, transformOp, transformOp);
-        __syncthreads();
         cublasdx::copy<BLAS, aAlignment>(gA(cute::_, cute::_, kStage), sA);
         cublasdx::copy<BLAS, bAlignment>(gB(cute::_, cute::_, kStage), sB);
         cpFence();
@@ -490,6 +493,7 @@ namespace flashmoe::tile
         cublasdx::copy<BLAS, bAlignment>(gBu(cute::_, cute::_, stage), sBu);
         cpFence();
       });
+      // NCU50: same post-MMA sync elision on gated path (next-K after both MMAs).
       for (int kStage = pipeStages; kStage < tilesK; ++kStage) {
         const int ps = kStage % pipeStages;
         update_buffer<sASS>(sA, sAP, ps);
@@ -498,7 +502,6 @@ namespace flashmoe::tile
         cpWait<pipeStages - 1>();
         BLAS().execute(sA, sBg, accGate, transformOp, transformOp);
         BLAS().execute(sA, sBu, accUp, transformOp, transformOp);
-        __syncthreads();
         cublasdx::copy<BLAS, aAlignment>(gA(cute::_, cute::_, kStage), sA);
         cublasdx::copy<BLAS, bAlignment>(gBg(cute::_, cute::_, kStage), sBg);
         cublasdx::copy<BLAS, bAlignment>(gBu(cute::_, cute::_, kStage), sBu);
