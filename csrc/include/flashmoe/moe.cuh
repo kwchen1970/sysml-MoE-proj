@@ -173,8 +173,9 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI47: bounds=1. Dispatch CTA share 75%→62.5% (5/8). Abandon EPI46 pS1=2 rematch.
-  // ≠ warp-TPS / launch_bounds / dyn TPS / pS1=2 / EPI38 dispatch50 / PreferL1 / pS0=1.
+  // ARCH37: CTA role-split assignQueues (even=GEMM1-first, odd=GEMM0-first) on EPI47.
+  // Keep dispatch 62.5%, shared-A pS0=2, bounds=1. ≠ PreferL1/unfuse/doorbell/racy-steal/
+  // AccessPolicy/bN0=32/bK1=32/bM=64/strip/publish-before-ready/HYB76 all-local-first.
   __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();

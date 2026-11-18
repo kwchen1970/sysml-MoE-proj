@@ -794,9 +794,10 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI47: dispatch 62.5% (5/8). Abandon EPI46 pS1=2 (MARGINAL −0.595%; ARCH31/NCU41 rematch).
-  // Keep shared-A pS0=2, pS1=default, bounds=1, schedCap, full stIds.
-  // ≠ warp-TPS / launch_bounds / dyn TPS / pS1=2 / EPI38 dispatch50 / PreferL1 / pS0=1.
+  // ARCH37: CTA role-split (even GEMM1-first / odd GEMM0-first) on EPI47 tip.
+  // Keep dispatch 62.5%, shared-A pS0=2, pS1=default, bounds=1, schedCap, full stIds.
+  // ≠ PreferL1/unfuse/doorbell/racy-steal/AccessPolicy/bN0=32/bK1=32/bM=64/strip/
+  // publish-before-ready/HYB76 all-lanes local-first.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;

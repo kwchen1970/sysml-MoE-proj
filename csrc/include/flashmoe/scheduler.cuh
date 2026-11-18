@@ -450,8 +450,10 @@ namespace flashmoe::scheduler
         clampToSlots(affLaneCold, schedulerCount, coldSlots, affColdBudget);
       }
       __syncwarp();
+      // ARCH37: even lanes prefer GEMM1 (global); odd prefer GEMM0 (subscriber).
       assignQueues(local, static_cast<unsigned>(kLocal), hot0, hot1,
-                   affHotBudget[threadIdx.x], affColdBudget[threadIdx.x], take);
+                   affHotBudget[threadIdx.x], affColdBudget[threadIdx.x], take,
+                   (threadIdx.x & 1u) == 0u);
 
       bool dirty = false;
       #pragma unroll
