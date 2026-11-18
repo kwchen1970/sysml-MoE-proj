@@ -131,15 +131,22 @@ namespace flashmoe::subscriber
       auto* rcData = sHeap + heap.advanceOffset<1, 1>(args.epRank, ingredients.localExpertIdx);
       auto* intraStaging = sHeap + heap.advanceOffset<1, 0>(peer, ingredients.localExpertIdx);
       taskResults[1] = p == PeerConnectivity::remote ? intraStaging : rcData;
+      // NCU46: column-major GEMM0 emission (all M-rows of n0, then next n0).
+      // Same tileIdx encoding / task counts; streams one expert Up B column
+      // back-to-back for L1TEX/weight reuse (ARCH6 NCU #2). Orthogonal to
+      // AccessPolicy, Up/Down L2 prefetch, and shared-A any-I / mid-I k≤6.
       const auto wT = fTilesM * args.tilesN0;
       const auto fS = wT / WARP_SIZE + (laneId < wT % WARP_SIZE);
       const auto rT = args.tilesN0 % WARP_SIZE;
       const auto lS = args.tilesN0 / WARP_SIZE + (rT > 0 ? laneId < rT : 0);
       const auto tSlice = fS + (routedTokens % bM == 0 ? 0 : lS);
+      const auto mStride = fTilesM > 0 ? fTilesM : 1U;
 
       for (int i = 0; i < fS; ++i) {
-        const auto tileIdx = laneId + i * WARP_SIZE;
-        const auto rowIdx = tileIdx / args.tilesN0;
+        const auto linear = laneId + i * WARP_SIZE;
+        const auto n0 = linear / mStride;
+        const auto rowIdx = linear % mStride;
+        const auto tileIdx = rowIdx * args.tilesN0 + n0;
         const auto syncIdx = sO + rowIdx;
         ingredients.tileSize = bM;
         args.tQ[DQ::next<DQType::stride, subscriberCount>(qIdx, i)] = Task{
@@ -147,7 +154,7 @@ namespace flashmoe::subscriber
         };
       }
 
-      // residue tile
+      // residue tile — keep row-major for the fringe row
       if (const auto residue = routedTokens - fTilesM * bM; residue) {
         for (uint j = 0; j < lS; j++) {
           const auto tileIdx = fTilesM * args.tilesN0 + laneId + j * WARP_SIZE;
