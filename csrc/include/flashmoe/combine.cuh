@@ -46,19 +46,16 @@ namespace flashmoe
     static_assert(cute::rank_v<TileCoord> == 2);
     static_assert(decltype(cute::get<0>(tileCoord))::value == 0);
     static_assert(cArr == cublasdx::row_major);
-    // EPI41: SkipGmemLoad reads TPS live from gmem (no smem staging) — frees static
-    // stIds[bM] on the fuse path. Variant of EPI39 near-miss without tileSize rematch.
-    constexpr int kStIdsN = SkipGmemLoad ? 1 : bM;
-    __shared__ TPS stIds[kStIdsN];
+    __shared__ TPS stIds[bM];
     using SCS = cuda::std::conditional_t<cArr == cublasdx::row_major, cute::Stride<cute::Int<bN>, cute::_1>,
                                          cute::Stride<cute::_1, cute::Int<bM>>>;
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
+    for (int i = threadIdx.x; i < bM; i += threads) {
+      stIds[i] = tokenIndices[i];
+    }
     if constexpr (!SkipGmemLoad) {
-      for (int i = threadIdx.x; i < bM; i += threads) {
-        stIds[i] = tokenIndices[i];
-      }
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
       static_assert(cute::is_compatible<decltype(gC.layout()), decltype(sC.layout())>::value);
       // copy processed tile from gmem -> smem
@@ -66,13 +63,6 @@ namespace flashmoe
       cublasdx::copy_wait();
     }
     __syncthreads();
-    auto tpsAt = [&](const int row) -> TPS {
-      if constexpr (SkipGmemLoad) {
-        return tokenIndices[row];
-      } else {
-        return stIds[row];
-      }
-    };
     if constexpr (c == CombineMode::single) {
       using VTD = VectorTypeDescriptor<typename RawType<Element>::type, ElementAlignment<Element, bN>>;
       using VT = VTD::VectorType;
@@ -99,7 +89,7 @@ namespace flashmoe
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / vbN;
           const auto colIdx = idx % vbN;
-          const auto tokenIdx = tpsAt(rowIdx).tokenIdx;
+          const auto tokenIdx = stIds[rowIdx].tokenIdx;
           // smem -> gmem.
           tC(tokenIdx, colIdx) = vsC(rowIdx, colIdx);
         }
@@ -109,7 +99,7 @@ namespace flashmoe
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / vbN;
           const auto colIdx = idx % vbN;
-          const auto tokenIdx = tpsAt(rowIdx).tokenIdx;
+          const auto tokenIdx = stIds[rowIdx].tokenIdx;
           // smem -> gmem.
           if (idx < actualElems) {
             tC(tokenIdx, colIdx) = vsC(rowIdx, colIdx);
@@ -122,7 +112,7 @@ namespace flashmoe
           const auto idx = threadIdx.x + elemsPerThread * threads;
           const auto rowIdx = idx / vbN;
           const auto colIdx = idx % vbN;
-          const auto tokenIdx = tpsAt(rowIdx).tokenIdx;
+          const auto tokenIdx = stIds[rowIdx].tokenIdx;
           // smem -> gmem.
           if (idx < actualElems) {
             tC(tokenIdx, colIdx) = vsC(rowIdx, colIdx);
@@ -167,7 +157,7 @@ namespace flashmoe
           const auto idx = threadIdx.x + i * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;
-          const auto indexAndScale = tpsAt(rowIdx);
+          const auto indexAndScale = stIds[rowIdx];
           auto tokenValue = vsC(rowIdx, colIdx);
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;
@@ -205,7 +195,7 @@ namespace flashmoe
           if (idx < actualElems) {
             const auto rowIdx = idx / rbN;
             const auto colIdx = idx % rbN;
-            const auto indexAndScale = tpsAt(rowIdx);
+            const auto indexAndScale = stIds[rowIdx];
             auto tokenValue = vsC(rowIdx, colIdx);
             RVR scaledValue{};
             const auto tokIdx = indexAndScale.tokenIdx;
@@ -240,7 +230,7 @@ namespace flashmoe
           const auto idx = threadIdx.x + redElemsPerThread * threads;
           const auto rowIdx = idx / rbN;
           const auto colIdx = idx % rbN;
-          const auto indexAndScale = tpsAt(rowIdx);
+          const auto indexAndScale = stIds[rowIdx];
           auto tokenValue = vsC(rowIdx, colIdx);
           RVR scaledValue{};
           const auto tokIdx = indexAndScale.tokenIdx;

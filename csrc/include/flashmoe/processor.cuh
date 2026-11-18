@@ -388,6 +388,14 @@ namespace flashmoe::processor
             const auto* __restrict__ tokenIds = tokenIndices
               + (static_cast<size_t>(task.expertIdx()) * roundEC + tokenBatchStart);
             const auto tileCoord = cute::make_coord(cute::_0{}, nCoord);
+            // EPI42: L2-prefetch TPS rows before fuse combine (keep full stIds smem staging).
+            // Epilogue latency hide for tokenIndices — ≠ live-TPS / tileSize TPS / weight L2 pref.
+            {
+              const uint nTok = task.tileSize();
+              for (uint i = threadIdx.x; i < nTok; i += threads) {
+                asm volatile("prefetch.global.L2 [%0];" ::"l"(tokenIds + i) : "memory");
+              }
+            }
             combine<bM, bN, Arch, threads, combineMode, true>(S, H, workspace, tokenIds, moeOutput,
               static_cast<const Element*>(nullptr), task.tileSize(), tileCoord);
             if (!threadIdx.x) {
