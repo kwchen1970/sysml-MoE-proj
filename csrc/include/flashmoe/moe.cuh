@@ -173,9 +173,9 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI48 on EPI47 KEEP: dispatch 62.5% locked + A-only next-K L2 (tile).
-  // ≠ B-only EPI37 / A+B EPI19 / pS1=2 / warp-TPS / launch_bounds / dyn TPS / PreferL1.
-  __launch_bounds__(Config::Threads::value, 1)
+  // EPI49 on EPI47 KEEP: soft launch_bounds(.,2) + dispatch 62.5% locked.
+  // Abandon EPI48 A-only next-K (+3.9%). ≠ pS1=2 / dyn TPS / PreferL1 / bounds≥3 / pS0=1.
+  __launch_bounds__(Config::Threads::value, 2)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;
