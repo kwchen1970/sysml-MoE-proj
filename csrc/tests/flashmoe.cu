@@ -821,9 +821,15 @@ void drive(const int argc, char** argv) {
   auto launch = [&](auto bN0C, auto pS0C) {
     constexpr int bN0 = decltype(bN0C)::value;
     constexpr int pS0 = decltype(pS0C)::value;
-    constexpr int pS1 = pS; // GEMM1: keep gated default
+    // ARCH31: deepen GEMM1 async K (pS1=2) for Down-weight scoreboard hide.
+    // Leave GEMM0 at NCU10 pS0=2 / two-pass pS. ≠ phase-balance / col-major /
+    // bK32 / sequential shared-A / AccessPolicy / PreferL1 / pS0=1.
+    constexpr int pS1 = arch >= 800 ? 2 : pS;
     if (I <= bK1 || I % bK1 != 0 || I < bN0 || I % bN0 != 0) {
       throw std::invalid_argument("I is invalid");
+    }
+    if (pS1 > static_cast<int>(I / bK1)) {
+      throw std::invalid_argument("pS1 must be <= tilesK1");
     }
     switch (E) {
       case 8:
