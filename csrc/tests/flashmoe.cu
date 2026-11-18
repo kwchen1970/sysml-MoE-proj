@@ -794,9 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // NCU10: shared-A ElementC reg-gate frees gateCache; spend that smem on
-  // GEMM0 pS=2 (L1TEX pipeline depth) while keeping 2 blocks/SM. Two-pass
-  // stays HYB17 (pS=1 + gateCache). GEMM1 stays pS=1.
+  // ARCH34: bf16 gated bM=64 (was 128) cuts Up/Down CTA footprint on M for
+  // occupancy (#1). Keep bN0=64/pS0=2/bK=64. ≠ toxic bN0=32 / bK1=32 / pS1=2 /
+  // phase-balance / col-major / GEMM0 bK32 / sequential shared-A / AccessPolicy / PreferL1.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -804,7 +804,8 @@ void drive(const int argc, char** argv) {
   constexpr auto pS = arch >= 900 ? 3 : arch >= 800
     ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1;
-  constexpr auto bM = cuda::std::is_same_v<Element, double> ? 64 : 128;
+  constexpr auto bM = (arch >= 800 && mt == flashmoe::MLPMatmulType::gated && sizeof(Element) == 2)
+    ? 64 : (cuda::std::is_same_v<Element, double> ? 64 : 128);
   static_assert(bM >= 1);
   if (H <= bK0 || H % bK0 != 0 || H < bN1 || H % bN1 != 0) {
     throw std::invalid_argument("H is invalid");
