@@ -346,8 +346,10 @@ namespace flashmoe::scheduler
     __shared__ unsigned affChoice[2];
     __shared__ unsigned affLaneHot[32];
     __shared__ unsigned affLaneCold[32];
+    __shared__ unsigned affLaneGlobal[32];
     __shared__ unsigned affHotBudget[32];
     __shared__ unsigned affColdBudget[32];
+    __shared__ unsigned affGlobalBudget[32];
 
     unsigned sticky0 = kNoExpert;
     unsigned sticky1 = kNoExpert;
@@ -422,10 +424,14 @@ namespace flashmoe::scheduler
       const unsigned hot1 = affChoice[1];
       unsigned hotLocal = 0u;
       unsigned coldLocal = 0u;
+      unsigned globalLocal = 0u;
       #pragma unroll
       for (int i = 0; i < kLocal; ++i) {
         if (!local[i].tasks) {
           continue;
+        }
+        if (local[i].globalQueue) {
+          globalLocal += local[i].tasks;
         }
         if (isHotExpert(local[i].expert, hot0, hot1)) {
           hotLocal += local[i].tasks;
@@ -435,23 +441,47 @@ namespace flashmoe::scheduler
       }
       affLaneHot[threadIdx.x] = hotLocal;
       affLaneCold[threadIdx.x] = coldLocal;
+      affLaneGlobal[threadIdx.x] = globalLocal;
       __syncwarp();
       const unsigned slots = processorTally == 0 ? processors : processorTally;
       if (threadIdx.x == 0) {
         unsigned hotTotal = 0u;
+        unsigned globalTotal = 0u;
         for (unsigned e = 0; e < nLx; ++e) {
           if (isHotExpert(e, hot0, hot1)) {
             hotTotal += affHist[e];
           }
         }
-        const bool admitCold = hotTotal < slots;
-        clampToSlots(affLaneHot, schedulerCount, admitCold ? 0xffffffffu : slots, affHotBudget);
-        const unsigned coldSlots = admitCold && slots > hotTotal ? slots - hotTotal : 0u;
+        for (unsigned t = 0; t < schedulerCount; ++t) {
+          globalTotal += affLaneGlobal[t];
+        }
+        // ARCH30: phase load-balance — reserve ~1/4 of free CTAs for global
+        // GEMM1/combine when any finish work is ready, so long GEMM0 hot poles
+        // do not monopolize the wave (NCU #4 eligible-warp skew).
+        unsigned reserve = 0u;
+        if (globalTotal > 0u && slots > 0u) {
+          reserve = slots / 4u;
+          if (reserve == 0u) {
+            reserve = 1u;
+          }
+          if (reserve > globalTotal) {
+            reserve = globalTotal;
+          }
+          if (reserve > slots) {
+            reserve = slots;
+          }
+        }
+        const unsigned hotCap = slots > reserve ? slots - reserve : 0u;
+        const bool admitCold = hotTotal < hotCap;
+        clampToSlots(affLaneHot, schedulerCount, admitCold ? 0xffffffffu : hotCap, affHotBudget);
+        const unsigned coldSlots = admitCold && hotCap > hotTotal ? hotCap - hotTotal : 0u;
         clampToSlots(affLaneCold, schedulerCount, coldSlots, affColdBudget);
+        clampToSlots(affLaneGlobal, schedulerCount, reserve, affGlobalBudget);
       }
       __syncwarp();
       assignQueues(local, static_cast<unsigned>(kLocal), hot0, hot1,
-                   affHotBudget[threadIdx.x], affColdBudget[threadIdx.x], take);
+                   affHotBudget[threadIdx.x], affColdBudget[threadIdx.x], take,
+                   affGlobalBudget[threadIdx.x]);
 
       bool dirty = false;
       #pragma unroll

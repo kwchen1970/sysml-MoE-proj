@@ -92,18 +92,29 @@ FLASHMOE_HD void clampToSlots(const unsigned* local, unsigned n, unsigned slots,
 // Global queues are taken whole so a one-shot head is never split.
 // Subscriber queues may be taken partially. Global queues are preferred
 // inside a budget so a finished GEMM1 is not stuck behind more GEMM0.
+// ARCH30: optional globalReserve spends first on any-expert global (GEMM1/
+// combine) queues so long GEMM0 waves cannot starve finish-path CTAs.
 FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
                               unsigned hot0, unsigned hot1,
                               unsigned hotBudget, unsigned coldBudget,
-                              unsigned* take) {
+                              unsigned* take, unsigned globalReserve = 0) {
   for (unsigned i = 0; i < nq; ++i) {
     take[i] = 0;
+  }
+  for (unsigned i = 0; i < nq && globalReserve > 0; ++i) {
+    const LocalQueue& q = queues[i];
+    if (q.tasks == 0 || !q.globalQueue) {
+      continue;
+    }
+    take[i] = q.tasks;
+    globalReserve = globalReserve > q.tasks ? globalReserve - q.tasks : 0;
   }
   for (unsigned pass = 0; pass < 2; ++pass) {
     const bool wantGlobal = pass == 0;
     for (unsigned i = 0; i < nq; ++i) {
       const LocalQueue& q = queues[i];
-      if (q.tasks == 0 || q.globalQueue != wantGlobal || !isHotExpert(q.expert, hot0, hot1)) {
+      if (q.tasks == 0 || q.globalQueue != wantGlobal || take[i] != 0 ||
+          !isHotExpert(q.expert, hot0, hot1)) {
         continue;
       }
       if (hotBudget == 0) {
