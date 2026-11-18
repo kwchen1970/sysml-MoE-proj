@@ -52,10 +52,19 @@ namespace flashmoe
     using SCL = cute::Layout<cute::Shape<cute::Int<bM>, cute::Int<bN>>, SCS>;
     auto sC = cute::make_tensor(cute::make_smem_ptr(static_cast<Element*>(workspace)),
                                 SCL{});
-    for (int i = threadIdx.x; i < bM; i += threads) {
-      stIds[i] = tokenIndices[i];
+    // EPI39: on ARCH6 SkipGmemLoad fuse path, only stage live tile rows (tileSize),
+    // not the full bM pad — fewer TPS gmem loads on partial tiles. Epilogue/smem lever;
+    // ≠ dispatch50 / pad+8 / Up@GEMM0 L2 / weight next-K.
+    if constexpr (SkipGmemLoad) {
+      const int nTok = static_cast<int>(tileSize);
+      for (int i = threadIdx.x; i < nTok; i += threads) {
+        stIds[i] = tokenIndices[i];
+      }
     }
-    if constexpr (!SkipGmemLoad) {
+    else {
+      for (int i = threadIdx.x; i < bM; i += threads) {
+        stIds[i] = tokenIndices[i];
+      }
       const auto gC = tile::get<bM, bN, cArr>(tokens, bM, H, tileCoord);
       static_assert(cute::is_compatible<decltype(gC.layout()), decltype(sC.layout())>::value);
       // copy processed tile from gmem -> smem

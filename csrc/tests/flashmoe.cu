@@ -794,8 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI38: dispatch share 75%→50% (more compute CTAs). Abandon EPI37 weight next-K
-  // (+1.5%), EPI36 Up@GEMM0, pad+8. Shared-A pS0=2. No PreferL1 / carveout / pS0=1.
+  // EPI39: SkipGmemLoad fuse path stages only tileSize TPS rows (epilogue/smem).
+  // Abandon EPI38 dispatch50 (MARGINAL −0.57%). Shared-A pS0=2, dispatch 75%.
+  // No pad+8 / Up@GEMM0 L2 / weight next-K / PreferL1 / carveout / pS0=1.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -866,7 +867,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI38: ARCH6 shared-A pS0=2 + leaner dispatch (50%).
+    // EPI39: ARCH6 shared-A pS0=2 + tileSize-only TPS stage on fuse combine.
     launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});

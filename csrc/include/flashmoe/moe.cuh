@@ -173,7 +173,7 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI38: bounds=1. Keep schedCap. Leaner dispatch share (50%) — more compute CTAs.
+  // EPI39: bounds=1. Keep schedCap + ARCH6 dispatch 75%. SkipGmemLoad TPS=tileSize only.
   __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
@@ -199,9 +199,7 @@ namespace flashmoe::moe
       ctx.symHeap, ctx.nLx, roundEC, kArgs.H, sizeof(DataType)
     };
     const auto processors = gridDim.x - 1;
-    // EPI38: leaner dispatch share (50%) so more persistent CTAs stay on GEMM0/GEMM1.
-    // Targets ARCH6 mid occupancy / no-eligible bubbles — not L2 prefetch rematch.
-    const auto dispatchProcessors = cute::max(processors / 2, 1); // 50%
+    const auto dispatchProcessors = cute::max((processors * 3) / 4, 1); // 75%
     const auto superBlockSize = min(dispatchSuperBlockSize(kArgs.E), dispatchProcessors);
     const auto dispatchBlocks = cuda::round_down(cute::min(superBlockSize * kArgs.E, MAX_DISPATCH_BLOCKS, dispatchProcessors), superBlockSize);
     if (blockIdx.x == gridDim.x - 1) {
