@@ -303,11 +303,9 @@ namespace flashmoe::processor
             constexpr auto TQSZero = cuda::std::bit_cast<uint64_t>(TQSignal{0, 0});
             doorbell.store(TQSZero, cuda::memory_order_relaxed);
           }
-          else {
-            cuda::atomic_ref<SQT, cuda::thread_scope_device> sqd{*pA.sQ};
-            // Eagerly indicate readiness for the next task
-            sqd.store(flashmoe::ready, cuda::memory_order_relaxed);
-          }
+          // ARCH36: do NOT eager-ready here — publish-before-ready below after the
+          // task (and GEMM0→GEMM1 notifyNext) completes so the scheduler cannot
+          // reclaim this CTA mid-handoff. ≠ doorbell skip / racy steal / strip-fusion.
           globalInterrupt = payload.interrupt;
           // replace old payload with new one
           tqs = payload;
@@ -458,8 +456,15 @@ namespace flashmoe::processor
         }
         break;
         }
+        // ARCH36 publish-before-ready: CTA re-enters the free pool only after the
+        // current fused task finished (GEMM0 includes notifyNext of GEMM1 tiles).
+        __syncthreads();
+        if (!threadIdx.x) {
+          cuda::atomic_ref<SQT, cuda::thread_scope_device> sqd{*pA.sQ};
+          sqd.store(flashmoe::ready, cuda::memory_order_release);
+        }
+        __syncthreads();
 #if FLASHMOE_PROJECT_TRACE
-        __syncthreads(); // trace boundary includes completion by all task threads
         FLASHMOE_TRACE_STATE(flashmoe::project_trace::other);
 #endif
       }
