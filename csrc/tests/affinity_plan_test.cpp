@@ -127,14 +127,19 @@ static void testGlobalQueueIsWhole() {
 }
 
 static void testNarrowToLongPole() {
+  // NCU51: need hist[hot0] >= 2*slots to drop (soft longpole).
   unsigned hist[4] = {40, 12, 3, 0};
   unsigned hot0 = 0;
   unsigned hot1 = 1;
   narrowToLongPole(hist, hot0, hot1, 32);
-  expect(hot1 == kNoExpert, "a long pole that fills the CTAs drops its partner");
+  expect(hot1 == 1, "filling CTAs once is not enough to drop the partner");
+  hist[0] = 70;
+  hot1 = 1;
+  narrowToLongPole(hist, hot0, hot1, 32);
+  expect(hot1 == kNoExpert, "a 2x long pole drops its partner");
   hot1 = 1;
   narrowToLongPole(hist, hot0, hot1, 48);
-  expect(hot1 == 1, "a long pole that cannot fill the CTAs keeps its partner");
+  expect(hot1 == 1, "below 2x slots keeps the partner");
 }
 
 int main() {
