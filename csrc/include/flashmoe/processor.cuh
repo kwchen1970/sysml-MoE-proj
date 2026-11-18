@@ -374,6 +374,25 @@ namespace flashmoe::processor
           const auto* bP = expertDownWeights + expertWeightSize * task.localExpertIdx();
           auto* __restrict__ cP = reinterpret_cast<Element*>(task.cData[1]);
           const auto* __restrict__ biasP = biasDown + static_cast<size_t>(H) * task.localExpertIdx();
+          // NCU42: L2-prefetch Down weights at GEMM1 CTA entry (consumer-side),
+          // not GEMM0→GEMM1 enqueue handoff. Targets Down-proj L1TEX scoreboard.
+          // ≠ AccessPolicy / Down handoff / Up GEMM0 pref / single-hot / pS1=2.
+          {
+            constexpr size_t kPrefetchBytes = 512 * 1024;
+            constexpr int lineElems = static_cast<int>(128 / sizeof(Element));
+            const size_t prefElems =
+              expertWeightSize < (kPrefetchBytes / sizeof(Element))
+                ? expertWeightSize
+                : (kPrefetchBytes / sizeof(Element));
+            for (size_t i = static_cast<size_t>(threadIdx.x) * lineElems; i < prefElems;
+                 i += static_cast<size_t>(threads) * lineElems) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+              asm volatile("prefetch.global.L2 [%0];" ::"l"(bP + i) : "memory");
+#else
+              (void)(bP + i);
+#endif
+            }
+          }
           constexpr int bM = cute::get<0>(typename TileGEMM1::TileShape{});
           constexpr int bN = cute::get<1>(typename TileGEMM1::TileShape{});
           constexpr int Arch = TileGEMM1::TileArch::value;
