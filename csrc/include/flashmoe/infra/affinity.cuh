@@ -22,6 +22,9 @@ struct LocalQueue {
 
 // hist[e] is ready tasks whose front expert is e. Ties keep the lower index.
 // A sticky expert stays primary until another expert has strictly more work.
+// HYB77: soft sticky1 — previous partner stays hot1 until another non-primary
+// expert has strictly more ready work (same hysteresis as sticky0). Orthogonal
+// to dual-hot / asym-longpole / partner-GEMM1 / local-first.
 FLASHMOE_HD void chooseHotExperts(const unsigned* hist, unsigned nExperts,
                                   unsigned sticky0, unsigned sticky1,
                                   unsigned& hot0, unsigned& hot1) {
@@ -51,14 +54,34 @@ FLASHMOE_HD void chooseHotExperts(const unsigned* hist, unsigned nExperts,
   if (hot0 == kNoExpert) {
     return;
   }
-  if (stickyAlive && sticky0 != hot0) {
+  const bool sticky1Alive =
+      sticky1 != kNoExpert && sticky1 < nExperts && hist[sticky1] > 0 && sticky1 != hot0;
+  if (sticky1Alive) {
+    unsigned rival = kNoExpert;
+    unsigned rivalCount = 0;
+    for (unsigned e = 0; e < nExperts; ++e) {
+      if (e == hot0) {
+        continue;
+      }
+      const unsigned c = hist[e];
+      if (c > rivalCount) {
+        rival = e;
+        rivalCount = c;
+      }
+    }
+    // Soft: sticky1 wins ties against a new rival so partner weights stay hot.
+    if (hist[sticky1] >= rivalCount) {
+      hot1 = sticky1;
+    } else {
+      hot1 = rival;
+    }
+  } else if (stickyAlive && sticky0 != hot0) {
     hot1 = sticky0;
   } else if (best != kNoExpert && best != hot0) {
     hot1 = best;
   } else if (second != kNoExpert && second != hot0) {
     hot1 = second;
   }
-  (void)sticky1;
 }
 
 FLASHMOE_HD bool isHotExpert(unsigned expert, unsigned hot0, unsigned hot1) {

@@ -41,7 +41,7 @@ static void testStickyAndLongPole() {
   expect(hot0 == 0, "equal work does not bounce off the sticky expert");
 
   hist[3] = 11;
-  chooseHotExperts(hist, 8, 0, 1, hot0, hot1);
+  chooseHotExperts(hist, 8, 0, kNoExpert, hot0, hot1);
   expect(hot0 == 3, "strictly more work becomes the long pole");
   expect(hot1 == 0, "previous sticky expert stays second so its weights are not dropped");
 }
@@ -137,6 +137,23 @@ static void testNarrowToLongPole() {
   expect(hot1 == 1, "a long pole that cannot fill the CTAs keeps its partner");
 }
 
+// HYB77: soft sticky1 keeps the previous partner on equal work.
+static void testSoftSticky1() {
+  unsigned hist[8] = {};
+  hist[0] = 20;  // primary
+  hist[1] = 8;   // lower-index rival (would win without sticky1)
+  hist[2] = 8;   // sticky1 previous partner
+  unsigned hot0 = kNoExpert;
+  unsigned hot1 = kNoExpert;
+  chooseHotExperts(hist, 8, 0, 2, hot0, hot1);
+  expect(hot0 == 0, "soft sticky1 leaves primary to the fullest expert");
+  expect(hot1 == 2, "soft sticky1 keeps the previous partner on a tie");
+
+  hist[1] = 9;
+  chooseHotExperts(hist, 8, 0, 2, hot0, hot1);
+  expect(hot1 == 1, "soft sticky1 yields when a rival has strictly more work");
+}
+
 int main() {
   testClamp();
   testStickyAndLongPole();
@@ -144,6 +161,7 @@ int main() {
   testAdmitColdWhenShort();
   testGlobalQueueIsWhole();
   testNarrowToLongPole();
+  testSoftSticky1();
   if (failures) {
     std::printf("%d failure(s)\n", failures);
     return 1;
