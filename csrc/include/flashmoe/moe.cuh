@@ -173,9 +173,10 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI49 on EPI47 KEEP: soft launch_bounds(.,2) + dispatch 62.5% locked.
-  // Abandon EPI48 A-only next-K (+3.9%). ≠ pS1=2 / dyn TPS / PreferL1 / bounds≥3 / pS0=1.
-  __launch_bounds__(Config::Threads::value, 2)
+  // EPI50 on EPI47 KEEP: skip fuse pre-copy sync (!WriteGmem) + dispatch 62.5% locked.
+  // Ban soft bounds (EPI49 +2.8%) and A-only next-K (EPI48). bounds=1.
+  // ≠ launch_bounds(.,2) / A-only L2 / pS1=2 / dyn TPS / PreferL1 / bounds≥3 / pS0=1.
+  __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
     using DataType = Config::DType;

@@ -794,8 +794,9 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI49: soft launch_bounds(.,2) on EPI47 KEEP (dispatch 62.5%). Abandon EPI48 A-only (+3.9%).
-  // Shared-A pS0=2, default pS1, schedCap. ≠ A-only/B-only/A+B / pS1=2 / dyn TPS / PreferL1 / bounds≥3.
+  // EPI50: skip fuse pre-copy sync on EPI47 KEEP (dispatch 62.5%). Ban soft bounds + A-only.
+  // Shared-A pS0=2, default pS1, bounds=1, schedCap.
+  // ≠ launch_bounds(.,2) / A-only L2 / pS1=2 / dyn TPS / PreferL1 / bounds≥3.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -866,7 +867,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI49: EPI47 bar — shared-A pS0=2 + dispatch 62.5% + soft bounds(.,2).
+    // EPI50: EPI47 bar — shared-A pS0=2 + dispatch 62.5% + skip fuse pre-copy sync.
     launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});
