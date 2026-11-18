@@ -444,9 +444,13 @@ namespace flashmoe::scheduler
             hotTotal += affHist[e];
           }
         }
-        const bool admitCold = hotTotal < slots;
-        clampToSlots(affLaneHot, schedulerCount, admitCold ? 0xffffffffu : slots, affHotBudget);
-        const unsigned coldSlots = admitCold && slots > hotTotal ? slots - hotTotal : 0u;
+        // HYB73: never admit cold experts. Leave CTAs idle rather than reload B
+        // for a non-hot expert. Not hot0-first, dual-hot keep, soft sticky0, or
+        // cold-GEMM1 admit (HYB70 still admitted cold global).
+        const bool admitCold = false;
+        (void)hotTotal;
+        clampToSlots(affLaneHot, schedulerCount, slots, affHotBudget);
+        const unsigned coldSlots = 0u;
         clampToSlots(affLaneCold, schedulerCount, coldSlots, affColdBudget);
       }
       __syncwarp();
