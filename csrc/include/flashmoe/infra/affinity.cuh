@@ -67,8 +67,11 @@ FLASHMOE_HD bool isHotExpert(unsigned expert, unsigned hot0, unsigned hot1) {
 
 // Two gated experts of this size already fill a 40 MB L2. When the longer
 // expert alone can occupy every free CTA, drop the partner.
+// HYB78: mild longpole — only drop the partner when primary has ≥2× free
+// CTA slots (default was ≥1×). Keeps dual-hot longer without dual-hot-keep
+// or asym ratio. Orthogonal to partner-GEMM1 / local-first / soft sticky1.
 FLASHMOE_HD void narrowToLongPole(const unsigned* hist, unsigned hot0, unsigned& hot1, unsigned slots) {
-  if (hot0 != kNoExpert && slots > 0 && hist[hot0] >= slots) {
+  if (hot0 != kNoExpert && slots > 0 && hist[hot0] >= (slots * 2u)) {
     hot1 = kNoExpert;
   }
 }
