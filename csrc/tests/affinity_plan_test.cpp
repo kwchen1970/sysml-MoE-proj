@@ -137,6 +137,18 @@ static void testNarrowToLongPole() {
   expect(hot1 == 1, "a long pole that cannot fill the CTAs keeps its partner");
 }
 
+// HYB79: even hot split reserves half the budget for the partner.
+static void testHotSplit() {
+  LocalQueue queues[2] = {
+    LocalQueue{0, 20, false},  // hot0
+    LocalQueue{1, 20, false},  // hot1
+  };
+  unsigned take[2] = {};
+  assignQueues(queues, 2, 0, 1, 10, 0, take);
+  expect(take[0] == 5, "hot-split gives primary half the hot budget");
+  expect(take[1] == 5, "hot-split gives partner half the hot budget");
+}
+
 int main() {
   testClamp();
   testStickyAndLongPole();
@@ -144,6 +156,7 @@ int main() {
   testAdmitColdWhenShort();
   testGlobalQueueIsWhole();
   testNarrowToLongPole();
+  testHotSplit();
   if (failures) {
     std::printf("%d failure(s)\n", failures);
     return 1;

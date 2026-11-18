@@ -92,6 +92,10 @@ FLASHMOE_HD void clampToSlots(const unsigned* local, unsigned n, unsigned slots,
 // Global queues are taken whole so a one-shot head is never split.
 // Subscriber queues may be taken partially. Global queues are preferred
 // inside a budget so a finished GEMM1 is not stuck behind more GEMM0.
+// HYB79: when this lane sees both hot experts, split the hot budget evenly
+// so the partner cannot be starved by primary fill. Single-hot lanes keep
+// the full shared hot budget. Orthogonal to dual-hot / asym / partner-GEMM1 /
+// local-first / soft sticky1 / mild longpole / hot0-first.
 FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
                               unsigned hot0, unsigned hot1,
                               unsigned hotBudget, unsigned coldBudget,
@@ -99,25 +103,71 @@ FLASHMOE_HD void assignQueues(const LocalQueue* queues, unsigned nq,
   for (unsigned i = 0; i < nq; ++i) {
     take[i] = 0;
   }
-  for (unsigned pass = 0; pass < 2; ++pass) {
-    const bool wantGlobal = pass == 0;
-    for (unsigned i = 0; i < nq; ++i) {
-      const LocalQueue& q = queues[i];
-      if (q.tasks == 0 || q.globalQueue != wantGlobal || !isHotExpert(q.expert, hot0, hot1)) {
-        continue;
+  bool has0 = false;
+  bool has1 = false;
+  for (unsigned i = 0; i < nq; ++i) {
+    if (queues[i].tasks == 0) {
+      continue;
+    }
+    if (hot0 != kNoExpert && queues[i].expert == hot0) {
+      has0 = true;
+    }
+    if (hot1 != kNoExpert && queues[i].expert == hot1) {
+      has1 = true;
+    }
+  }
+  const bool split = has0 && has1;
+  if (!split) {
+    for (unsigned pass = 0; pass < 2; ++pass) {
+      const bool wantGlobal = pass == 0;
+      for (unsigned i = 0; i < nq; ++i) {
+        const LocalQueue& q = queues[i];
+        if (q.tasks == 0 || q.globalQueue != wantGlobal ||
+            !isHotExpert(q.expert, hot0, hot1)) {
+          continue;
+        }
+        if (hotBudget == 0) {
+          continue;
+        }
+        if (q.globalQueue) {
+          take[i] = q.tasks;
+          hotBudget = hotBudget > q.tasks ? hotBudget - q.tasks : 0;
+        } else if (hotBudget >= q.tasks) {
+          take[i] = q.tasks;
+          hotBudget -= q.tasks;
+        } else {
+          take[i] = hotBudget;
+          hotBudget = 0;
+        }
       }
-      if (hotBudget == 0) {
-        continue;
-      }
-      if (q.globalQueue) {
-        take[i] = q.tasks;
-        hotBudget = hotBudget > q.tasks ? hotBudget - q.tasks : 0;
-      } else if (hotBudget >= q.tasks) {
-        take[i] = q.tasks;
-        hotBudget -= q.tasks;
-      } else {
-        take[i] = hotBudget;
-        hotBudget = 0;
+    }
+  } else {
+    unsigned budget0 = hotBudget / 2u;
+    unsigned budget1 = hotBudget - budget0;
+    for (unsigned expertPass = 0; expertPass < 2; ++expertPass) {
+      const unsigned wantExpert = expertPass == 0 ? hot0 : hot1;
+      unsigned& budget = expertPass == 0 ? budget0 : budget1;
+      for (unsigned pass = 0; pass < 2; ++pass) {
+        const bool wantGlobal = pass == 0;
+        for (unsigned i = 0; i < nq; ++i) {
+          const LocalQueue& q = queues[i];
+          if (q.tasks == 0 || q.globalQueue != wantGlobal || q.expert != wantExpert) {
+            continue;
+          }
+          if (budget == 0) {
+            continue;
+          }
+          if (q.globalQueue) {
+            take[i] = q.tasks;
+            budget = budget > q.tasks ? budget - q.tasks : 0;
+          } else if (budget >= q.tasks) {
+            take[i] = q.tasks;
+            budget -= q.tasks;
+          } else {
+            take[i] = budget;
+            budget = 0;
+          }
+        }
       }
     }
   }
