@@ -797,6 +797,9 @@ void drive(const int argc, char** argv) {
   // NCU10: shared-A ElementC reg-gate frees gateCache; spend that smem on
   // GEMM0 pS=2 (L1TEX pipeline depth) while keeping 2 blocks/SM. Two-pass
   // stays HYB17 (pS=1 + gateCache). GEMM1 stays pS=1.
+  // NCU47: deepen shared-A GEMM0 pS0 2→3 — one more in-flight K stage to hide
+  // L1TEX long-scoreboard behind MMA (no layout flip, no L2 prefetch,
+  // no AccessPolicy, no shared-A coverage rematch, ≠ pS1=2).
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -867,7 +870,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    launch(cute::Int<64>{}, cute::Int<2>{}); // NCU10: deepen shared-A K pipeline
+    launch(cute::Int<64>{}, cute::Int<3>{}); // NCU47: pS0=3 scoreboard hide
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{});
   }
