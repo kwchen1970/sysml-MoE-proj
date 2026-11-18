@@ -794,9 +794,8 @@ void drive(const int argc, char** argv) {
   if (k > E) {
     throw std::invalid_argument("k must be <= E");
   }
-  // EPI47: dispatch 62.5% (5/8). Abandon EPI46 pS1=2 (MARGINAL −0.595%; ARCH31/NCU41 rematch).
-  // Keep shared-A pS0=2, pS1=default, bounds=1, schedCap, full stIds.
-  // ≠ warp-TPS / launch_bounds / dyn TPS / pS1=2 / EPI38 dispatch50 / PreferL1 / pS0=1.
+  // EPI48: A-only next-K L2 on EPI47 KEEP (dispatch 62.5%). Shared-A pS0=2, default pS1.
+  // ≠ B-only EPI37 / A+B EPI19 / pS1=2 / warp-TPS / launch_bounds / dyn TPS / PreferL1.
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
@@ -867,7 +866,7 @@ void drive(const int argc, char** argv) {
     }
   };
   if (useSharedA) {
-    // EPI47: ARCH6 shared-A pS0=2 + gated default pS1; dispatch 62.5% in moe::forward.
+    // EPI48: EPI47 bar — shared-A pS0=2 + dispatch 62.5% + A-only next-K L2.
     launch(cute::Int<64>{}, cute::Int<2>{}, cute::Int<pS>{});
   } else {
     launch(cute::Int<sizeof(Element) == 2 ? 128 : 64>{}, cute::Int<pS>{}, cute::Int<pS>{});

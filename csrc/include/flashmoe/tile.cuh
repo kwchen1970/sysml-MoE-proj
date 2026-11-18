@@ -251,6 +251,38 @@ namespace flashmoe::tile
     cute::cp_async_fence();
   }
 
+  // EPI48: L2 prefetch helpers (A-only next-K). Stack on EPI47 dispatch 62.5%.
+  // ≠ B-only EPI37 / A+B EPI19 / pS1=2 / warp-TPS / launch_bounds.
+  __device__ __forceinline__
+  void prefetchL2(const void* addr) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+    asm volatile("prefetch.global.L2 [%0];" :: "l"(addr));
+#else
+    (void)addr;
+#endif
+  }
+
+  template <typename Tensor>
+  __device__ __forceinline__
+  void prefetchTensorL2(const Tensor& tile) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+    using E = cuda::std::remove_cvref_t<decltype(tile(0, 0))>;
+    constexpr int kLine = 128 / static_cast<int>(sizeof(E));
+    const int rows = static_cast<int>(cute::size<0>(tile));
+    const int cols = static_cast<int>(cute::size<1>(tile));
+    const int lines = (cols + kLine - 1) / kLine;
+    const int work = rows * lines;
+#pragma unroll 1
+    for (int w = threadIdx.x; w < work; w += static_cast<int>(blockDim.x)) {
+      const int r = w / lines;
+      const int c = (w - r * lines) * kLine;
+      prefetchL2(&tile(r, c));
+    }
+#else
+    (void)tile;
+#endif
+  }
+
   __device__ __forceinline__
   constexpr auto idx2Coord(const int& tilesM, const int& tilesN, const int& tileIdx) {
     const auto tileCoord = cute::idx2crd(tileIdx, cute::make_shape(tilesM, tilesN),
@@ -438,6 +470,10 @@ namespace flashmoe::tile
         update_buffer<sBSS>(sB, sBP, ps);
         cpWait<pipeStages - 1>();
         BLAS().execute(sA, sB, accumulator, transformOp, transformOp);
+        // EPI48: A-only next-K L2 prefetch behind MMA (not B / not A+B).
+        if (kStage + 1 < tilesK) {
+          prefetchTensorL2(gA(cute::_, cute::_, kStage + 1));
+        }
         __syncthreads();
         cublasdx::copy<BLAS, aAlignment>(gA(cute::_, cute::_, kStage), sA);
         cublasdx::copy<BLAS, bAlignment>(gB(cute::_, cute::_, kStage), sB);
@@ -498,6 +534,10 @@ namespace flashmoe::tile
         cpWait<pipeStages - 1>();
         BLAS().execute(sA, sBg, accGate, transformOp, transformOp);
         BLAS().execute(sA, sBu, accUp, transformOp, transformOp);
+        // EPI48: A-only next-K L2 (shared A feeds gate+up) — not weight B.
+        if (kStage + 1 < tilesK) {
+          prefetchTensorL2(gA(cute::_, cute::_, kStage + 1));
+        }
         __syncthreads();
         cublasdx::copy<BLAS, aAlignment>(gA(cute::_, cute::_, kStage), sA);
         cublasdx::copy<BLAS, bAlignment>(gBg(cute::_, cute::_, kStage), sBg);
