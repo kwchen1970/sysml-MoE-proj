@@ -800,7 +800,11 @@ void drive(const int argc, char** argv) {
   constexpr int bN1 = sizeof(Element) == 2 ? 128 : 64;
   constexpr int bK0 = cuda::std::is_same_v<Element, double> ? 32 : mt == flashmoe::MLPMatmulType::vanilla ? 64 :
   arch >= 800 ? 64 : 32;
-  constexpr int bK1 = bK0;
+  // ARCH32: GEMM1-only shallower bK1=32 cuts Down AB smem (~half) for occupancy
+  // without touching GEMM0 bK0=64/pS0=2. ≠ pS1=2 / phase-balance / col-major /
+  // GEMM0 bK32 / sequential shared-A / AccessPolicy / PreferL1.
+  constexpr int bK1 = (arch >= 800 && mt == flashmoe::MLPMatmulType::gated && sizeof(Element) == 2)
+    ? 32 : bK0;
   constexpr auto pS = arch >= 900 ? 3 : arch >= 800
     ? (mt == flashmoe::MLPMatmulType::gated ? 1 : 2)
     : 1;
