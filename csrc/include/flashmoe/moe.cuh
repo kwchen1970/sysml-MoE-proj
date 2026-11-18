@@ -6,7 +6,6 @@
 #define FLASHMOE_MOE_CUH
 
 #include "infra/activation.cuh"
-#include "infra/packed.cuh"
 
 #include "context.cuh"
 #include "dispatch.cuh"
@@ -88,15 +87,12 @@ namespace flashmoe::moe
       ? sizeof(Element) * bM * bN0 : 0;
     constexpr auto GEMM0Sz = cutlass::round_up(cute::max(gemm0AB, sizeof(Element) * bM * bN0)
       + gateCacheBytes, MAX_ALIGNMENT);
-    // EPI45: fuse combine parks TPS after C in dynamic smem — budget C + TPS*bM.
-    constexpr auto fuseCBytes = cutlass::round_up(sizeof(Element) * bM * bN1, alignof(flashmoe::TPS));
-    constexpr auto fuseCTPS = fuseCBytes + sizeof(flashmoe::TPS) * bM;
     constexpr auto GEMM1Sz = cutlass::round_up(cute::max(sizeof(Element) * bK1 * pSK1 * (bM + bN1),
-      fuseCTPS), MAX_ALIGNMENT);
+      sizeof(Element) * bM * bN1), MAX_ALIGNMENT);
     const auto dispatchSz = E * (sizeof(PEL) + sizeof(int));
     const auto OSSz = os::getSharedSize<threads, bM>(world, numLocalExperts, E, EC, tilesN1);
     const auto taskSz = sizeof(Task) * tilesN1;
-    constexpr auto combineSz = cutlass::round_up(fuseCTPS, MAX_ALIGNMENT);
+    constexpr auto combineSz = cutlass::round_up(sizeof(Element) * bM * bN1, MAX_ALIGNMENT);
     return cute::max(GEMM0Sz, GEMM1Sz, dispatchSz, OSSz, taskSz, combineSz);
   }
 
@@ -177,8 +173,8 @@ namespace flashmoe::moe
     Activation a,
     Topology topo
   >
-  // EPI45: bounds=1. Dynamic TPS after fuse C (smem layout). Keep schedCap + dispatch 75%.
-  // ≠ launch_bounds(.,2) / warp-TPS / pad+8 / dispatch50 / PreferL1 / pS0=1.
+  // EPI46: bounds=1. Shared-A GEMM1 pS1=2 (deeper Down async K / scoreboard).
+  // Abandon EPI45 dyn TPS. ≠ warp-TPS / launch_bounds(.,2) / SkipGmemLoad dyn TPS / pS0=1 / NCU47 pS0=3.
   __launch_bounds__(Config::Threads::value, 1)
   __global__  void forward(const __grid_constant__ KernelArgs kArgs, const __grid_constant__ Context ctx) {
     FLASHMOE_TRACE_BEGIN();
